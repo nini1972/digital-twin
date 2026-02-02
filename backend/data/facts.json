@@ -1,0 +1,29 @@
+{
+    "full_name": "Dominique Reyntjens",
+    "name": "Dominique",
+    "current_role": "Finance Specialist",
+    "location": "Reet",
+    "email": "ninicoe0@gmail.com",
+    "linkedin": "https://www.linkedin.com/in/dominiquereyntjens",
+    "specialties": [
+        "tax advice",
+        "auditing",
+        "financial analysis",
+        "risk management",
+        "AI",
+        "AI in finance"
+    ],
+    "years_experience": 28,
+    "education": [
+        {
+            "degree": "Master's in Economics",
+            "institution": "Univeristy of Antwerp",
+            "year": "1990"
+        },
+        {
+            "degree": "Master's tax",
+            "institution": "Univeristy of Leuven",
+            "year": "1992"
+        }
+    ]
+}
