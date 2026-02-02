@@ -27,3 +27,7 @@ output "custom_domain_url" {
   description = "Root URL of the production site"
   value       = var.use_custom_domain ? "https://${var.root_domain}" : ""
 }
+
+output "cloudfront_distribution_id" {
+  value = aws_cloudfront_distribution.main.id
+}
