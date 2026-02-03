@@ -31,3 +31,7 @@ output "custom_domain_url" {
 output "cloudfront_distribution_id" {
   value = aws_cloudfront_distribution.main.id
 }
+
+output "custom_domain" {
+  value = "https://domidigitaltwin.com"
+}

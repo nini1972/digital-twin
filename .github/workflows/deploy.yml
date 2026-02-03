@@ -79,7 +79,7 @@ jobs:
                   echo "api_url=$(terraform output -raw api_gateway_url)" >> $GITHUB_OUTPUT
                   echo "frontend_bucket=$(terraform output -raw s3_frontend_bucket)" >> $GITHUB_OUTPUT
                   echo "distribution_id=$(terraform output -raw cloudfront_distribution_id)" >> $GITHUB_OUTPUT
-
+                  echo "domain_url=$(terraform output -raw custom_domain_url)" >> $GITHUB_OUTPUT
             - name: Invalidate CloudFront
               if: ${{ steps.deploy_outputs.outputs.distribution_id != '' }}
               run: |
@@ -93,3 +93,4 @@ jobs:
                   echo "🌐 CloudFront URL: ${{ steps.deploy_outputs.outputs.cloudfront_url }}"
                   echo "📡 API Gateway: ${{ steps.deploy_outputs.outputs.api_url }}"
                   echo "🪣 Frontend Bucket: ${{ steps.deploy_outputs.outputs.frontend_bucket }}"
+                  echo "🔗 Custom Domain: ${{ steps.deploy_outputs.outputs.domain_url }}"
