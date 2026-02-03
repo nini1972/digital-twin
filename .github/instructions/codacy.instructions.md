@@ -10,7 +10,7 @@ Configuration for AI behavior when interacting with Codacy's MCP Server
 - ALWAYS use:
  - provider: gh
  - organization: nini1972
- - repository: twin
+ - repository: digital-twin
 - Avoid calling `git remote -v` unless really necessary
 
 ## CRITICAL: After ANY successful `edit_file` or `reapply` operation
