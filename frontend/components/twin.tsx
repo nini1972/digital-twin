@@ -137,36 +137,25 @@ export default function Twin() {
                         className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'
                             }`}
                     >
-                        {message.role === 'assistant' && (
-                            <div className="flex-shrink-0">
-                                {hasAvatar ? (
-                                    <img
-                                        src="/avatar.png"
-                                        alt="Digital Twin Avatar"
-                                        className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
-                                    />
-                                ) : (
-                                    <div className="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center">
-                                        <Bot className="w-5 h-5 text-white" />
-                                    </div>
-                                )}
+                        {message.role === 'assistant' ? (
+                            <div className="p-[2px] rounded-3xl bg-gradient-to-r from-pink-400 to-purple-400">
+                                <div className="bg-white rounded-3xl p-3 text-gray-800">
+                                    <p className="whitespace-pre-wrap">{message.content}</p>
+                                    <p className="text-xs mt-1 text-gray-500">
+                                        {message.timestamp.toLocaleTimeString()}
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="max-w-[70%] rounded-3xl p-3 bg-slate-700 text-white">
+                                <p className="whitespace-pre-wrap">{message.content}</p>
+                                <p className="text-xs mt-1 text-slate-300">
+                                    {message.timestamp.toLocaleTimeString()}
+                                </p>
                             </div>
                         )}
 
-                        <div
-                            className={`max-w-[70%] rounded-3xl p-3 ${message.role === 'user'
-                                ? 'bg-slate-700 text-white'
-                                : 'bg-white border border-gray-200 text-gray-800'
-                                }`}
-                        >
-                            <p className="whitespace-pre-wrap">{message.content}</p>
-                            <p
-                                className={`text-xs mt-1 ${message.role === 'user' ? 'text-slate-300' : 'text-gray-500'
-                                    }`}
-                            >
-                                {message.timestamp.toLocaleTimeString()}
-                            </p>
-                        </div>
+
 
                         {message.role === 'user' && (
                             <div className="flex-shrink-0">
