@@ -110,7 +110,7 @@ export default function Twin() {
                     <Bot className="w-6 h-6" />
                     AI Digital Twin
                 </h2>
-                <p className="text-sm text-slate-300 mt-1">Your AI course companion</p>
+                <p className="text-sm text-slate-300 mt-1">Your AI companion</p>
             </div>
 
             {/* Messages */}
@@ -143,10 +143,10 @@ export default function Twin() {
                                     <img
                                         src="/avatar.png"
                                         alt="Digital Twin Avatar"
-                                        className="w-8 h-8 rounded-full border border-slate-300"
+                                        className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
                                     />
                                 ) : (
-                                    <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
+                                    <div className="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center">
                                         <Bot className="w-5 h-5 text-white" />
                                     </div>
                                 )}
@@ -155,8 +155,8 @@ export default function Twin() {
 
                         <div
                             className={`max-w-[70%] rounded-lg p-3 ${message.role === 'user'
-                                    ? 'bg-slate-700 text-white'
-                                    : 'bg-white border border-gray-200 text-gray-800'
+                                ? 'bg-slate-700 text-white'
+                                : 'bg-white border border-gray-200 text-gray-800'
                                 }`}
                         >
                             <p className="whitespace-pre-wrap">{message.content}</p>
@@ -170,7 +170,7 @@ export default function Twin() {
 
                         {message.role === 'user' && (
                             <div className="flex-shrink-0">
-                                <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center">
+                                <div className="w-12 h-12 bg-gray-600 rounded-full flex items-center justify-center">
                                     <User className="w-5 h-5 text-white" />
                                 </div>
                             </div>
@@ -185,10 +185,10 @@ export default function Twin() {
                                 <img
                                     src="/avatar.png"
                                     alt="Digital Twin Avatar"
-                                    className="w-8 h-8 rounded-full border border-slate-300"
+                                    className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
                                 />
                             ) : (
-                                <div className="w-8 h-8 bg-slate-700 rounded-full flex items-center justify-center">
+                                <div className="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center">
                                     <Bot className="w-5 h-5 text-white" />
                                 </div>
                             )}

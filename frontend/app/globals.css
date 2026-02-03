@@ -25,3 +25,7 @@
 .delay-200 {
   animation-delay: 0.2s;
 }
+
+.avatar-glow {
+  filter: drop-shadow(0 0 8px rgba(255, 120, 200, 0.4));
+}
