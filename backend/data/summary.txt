@@ -4,3 +4,11 @@ My expertise includes BGAAP, IFRS, Consolidation, Reporting, financial analyse, 
 Currently, I'm focused on AI, and how AI can be used in the finance industry.
 
 My background includes external auditing in finance sector, insurance, commerce, Compliance Officer at Stockbroker, finance manager at Family office with focus on private equity, ESG, sustainability, SolarEnergy sector BtB, BtC, IPP in solarEnergy. Setting up of companies, funds, international structures.
+
+Languages: Dutch, English, French
+Skills: Auditing, Financial Analysis, Taxation, International Accounting, Budgeting, Reporting, Cost Controlling, Consolidation, management, HR, AI in Finance
+
+Tools: Excel, PowerBI, various ERP systems, AI tools
+
+Agentic AI frameworks: Google ADK, CrewAI, OpenAI SDK
+

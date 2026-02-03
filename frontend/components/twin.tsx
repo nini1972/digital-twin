@@ -193,11 +193,11 @@ export default function Twin() {
                                 </div>
                             )}
                         </div>
-                        <div className="bg-white border border-gray-200 rounded-lg p-3">
+                        <div className="bg-white border border-gray-200 rounded-3xl p-3 shadow-[0_0_12px_rgba(255,120,200,0.35)] animate-pulse">
                             <div className="flex space-x-2">
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100" />
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200" />
+                                <div className="w-2 h-2 rounded-full animate-bounce bg-gradient-to-br from-pink-400 to-purple-400" />
+                                <div className="w-2 h-2 rounded-full animate-bounce delay-100 bg-gradient-to-br from-purple-400 to-pink-300" />
+                                <div className="w-2 h-2 rounded-full animate-bounce delay-200 bg-gradient-to-br from-pink-300 to-purple-300" />
                             </div>
                         </div>
                     </div>
