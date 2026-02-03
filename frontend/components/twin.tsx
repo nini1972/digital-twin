@@ -154,7 +154,7 @@ export default function Twin() {
                         )}
 
                         <div
-                            className={`max-w-[70%] rounded-lg p-3 ${message.role === 'user'
+                            className={`max-w-[70%] rounded-3xl p-3 ${message.role === 'user'
                                 ? 'bg-slate-700 text-white'
                                 : 'bg-white border border-gray-200 text-gray-800'
                                 }`}
