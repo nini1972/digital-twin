@@ -156,10 +156,10 @@ export default function Twin() {
                 <div className="mt-4 h-0.5 w-full bg-linear-to-r from-pink-400/40 to-purple-400/40 rounded-full"></div>
             </div>
 
-            {/* Welcome area – only when no messages yet */}
-            {welcomePhase === "text" || welcomePhase === "fade" ? (
+            {/* Welcome text */}
+            {(welcomePhase === "text" || welcomePhase === "fade") && (
                 <div
-                    className={`text-center text-gray-500 ${welcomePhase === "fade" ? "welcome-fade" : "welcome-visible"
+                    className={`text-center text-gray-500 mt-20 ${welcomePhase === "fade" ? "welcome-fade" : "welcome-visible"
                         }`}
                 >
                     <p className="text-lg font-medium text-gray-700">
@@ -169,26 +169,31 @@ export default function Twin() {
                         Ask me anything about AI deployment.
                     </p>
                 </div>
-            ) : null}
-
-
-            {welcomePhase === "video" && (
-                <video
-                    src="/avatar-blink.mp4"
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-32 h-32 mt-4 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
-                    onEnded={() => setWelcomePhase("avatar")}
-                />
             )}
 
+            {/* Welcome video */}
+            {welcomePhase === "video" && (
+                <div className="flex justify-center mt-6">
+                    <video
+                        src="/avatar-blink.mp4"
+                        autoPlay
+                        muted
+                        playsInline
+                        className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
+                        onEnded={() => setWelcomePhase("avatar")}
+                    />
+                </div>
+            )}
+
+            {/* Welcome avatar */}
             {welcomePhase === "avatar" && (
-                <img
-                    src="/avatar.png"
-                    alt="Digital Twin Avatar"
-                    className="w-32 h-32 mt-4 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
-                />
+                <div className="flex justify-center mt-6">
+                    <img
+                        src="/avatar.png"
+                        alt="Digital Twin Avatar"
+                        className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
+                    />
+                </div>
             )}
 
             {/* Messages */}
