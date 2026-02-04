@@ -105,12 +105,32 @@ export default function Twin() {
     return (
         <div className="flex flex-col h-full bg-gray-50 rounded-lg shadow-lg">
             {/* Header */}
-            <div className="bg-gradient-to-r from-slate-700 to-slate-800 text-white p-4 rounded-t-lg">
-                <h2 className="text-xl font-semibold flex items-center gap-2">
-                    <Bot className="w-6 h-6" />
-                    AI Digital Twin
-                </h2>
-                <p className="text-sm text-slate-300 mt-1">Your AI companion</p>
+            <div className="relative bg-gradient-to-r from-slate-700 to-slate-800 text-white p-5 rounded-t-lg shadow-md">
+                <div className="flex items-center gap-3">
+                    {hasAvatar ? (
+                        <img
+                            src="/avatar.png"
+                            alt="Digital Twin Avatar"
+                            className="w-12 h-12 rounded-full border border-slate-300 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
+                        />
+                    ) : (
+                        <div className="w-12 h-12 bg-slate-600 rounded-full flex items-center justify-center shadow-inner">
+                            <Bot className="w-6 h-6 text-white" />
+                        </div>
+                    )}
+
+                    <div>
+                        <h2 className="text-2xl font-semibold tracking-wide">
+                            AI Digital Twin
+                        </h2>
+                        <p className="text-sm text-slate-300 mt-0.5">
+                            Where your experience meets AI clarity
+                        </p>
+                    </div>
+                </div>
+
+                {/* Accent line */}
+                <div className="mt-4 h-[2px] w-full bg-gradient-to-r from-pink-400/40 to-purple-400/40 rounded-full"></div>
             </div>
 
             {/* Messages */}
