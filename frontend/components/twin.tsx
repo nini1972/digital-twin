@@ -173,7 +173,7 @@ export default function Twin() {
 
             {/* Welcome video */}
             {welcomePhase === "video" && (
-                <div className="flex justify-center mt-6">
+                <div className="flex justify-center mt-8">
                     <video
                         src="/avatar-blink.mp4"
                         autoPlay
@@ -187,7 +187,7 @@ export default function Twin() {
 
             {/* Welcome avatar */}
             {welcomePhase === "avatar" && (
-                <div className="flex justify-center mt-6">
+                <div className="flex justify-center mt-8">
                     <img
                         src="/avatar.png"
                         alt="Digital Twin Avatar"
