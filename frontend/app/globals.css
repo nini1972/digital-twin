@@ -29,3 +29,17 @@
 .avatar-glow {
   filter: drop-shadow(0 0 8px rgba(255, 120, 200, 0.4));
 }
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+.fade-out {
+  animation: fadeOut 0.6s ease forwards;
+}
