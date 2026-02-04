@@ -21,17 +21,26 @@ export default function Twin() {
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
+    
+    const [welcomePhase, setWelcomePhase] = useState<"text" | "video" | "avatar" | "hidden">("text");
+
+    // sequence: text -> video -> avatar
     useEffect(() => {
-    if (messages.length === 1) {
-        setTimeout(() => setShowBlinkVideo(true), 200); // optional delay
-    }
-}, [messages]);
+        // 1) text visible for 2s, then fade out + switch to video
+        const textTimer = setTimeout(() => {
+            setWelcomePhase("video");
+        }, 2000); // adjust duration as you like
+
+        return () => clearTimeout(textTimer);
+    }, []);
+
     useEffect(() => {
-        if (messages.length === 1) {
-            // First message arrived → start blink
-            setShowBlinkVideo(true);
+        if (messages.length > 0) {
+            // user started chatting → hide entire welcome area
+            setWelcomePhase("hidden");
         }
     }, [messages]);
+
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
@@ -112,8 +121,7 @@ export default function Twin() {
             .catch(() => setHasAvatar(false));
     }, []);
 
-    const [showBlinkVideo, setShowBlinkVideo] = useState(false);
-    const [blinkFinished, setBlinkFinished] = useState(false);
+    
     return (
         <div className="flex flex-col h-full bg-gray-50 rounded-lg shadow-lg">
             {/* Header */}
@@ -137,21 +145,41 @@ export default function Twin() {
                 {/* Accent line */}
                 <div className="mt-4 h-[2px] w-full bg-gradient-to-r from-pink-400/40 to-purple-400/40 rounded-full"></div>
             </div>
-            {/* Welcome state */}
-            {messages.length === 0 && (
-                <div
-                    className={`text-center text-gray-500 mt-14 transition-opacity duration-700 
-                        `}
-                >
-                    <p className="text-lg font-medium text-gray-700">
-                        Hello! I'm your Digital Twin.
-                    </p>
-                    <p className="text-sm mt-2 text-gray-500">
-                        Ask me anything about AI deployment.
-                    </p>
+            
+            {/* Welcome area – only when no messages yet */}
+            {welcomePhase !== "hidden" && messages.length === 0 && (
+                <div className="flex flex-col items-center mt-14">
+                    {welcomePhase === "text" && (
+                        <div className="text-center text-gray-500 fade-out">
+                            <p className="text-lg font-medium text-gray-700">
+                                Hello! I'm your Digital Twin.
+                            </p>
+                            <p className="text-sm mt-2 text-gray-500">
+                                Ask me anything about AI deployment.
+                            </p>
+                        </div>
+                    )}
+
+                    {welcomePhase === "video" && (
+                        <video
+                            src="/avatar-blink.mp4"
+                            autoPlay
+                            muted
+                            playsInline
+                            className="w-32 h-32 mt-4 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
+                            onEnded={() => setWelcomePhase("avatar")}
+                        />
+                    )}
+
+                    {welcomePhase === "avatar" && (
+                        <img
+                            src="/avatar.png"
+                            alt="Digital Twin Avatar"
+                            className="w-32 h-32 mt-4 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
+                        />
+                    )}
                 </div>
             )}
-
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -164,23 +192,12 @@ export default function Twin() {
                         {message.role === 'assistant' ? (
                             <>
                                 <div className="flex-shrink-0">
-                                    {showBlinkVideo && !blinkFinished ? (
-                                        <video
-                                            src="/avatar-blink.mp4"
-                                            autoPlay
-                                            muted
-                                            playsInline
-                                            className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
-                                            onEnded={() => setBlinkFinished(true)}
-                                        />
-                                    ) : (
-                                        <img
-                                            src="/avatar.png"
-                                            alt="Digital Twin Avatar"
-                                            className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
-                                        />
-                                    )}
-                                </div>
+    <img
+        src="/avatar.png"
+        alt="Digital Twin Avatar"
+        className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
+    />
+</div>
 
                                 <div className="p-[2px] rounded-3xl bg-gradient-to-r from-pink-400 to-purple-400 max-w-[70%]">
                                     <div className="bg-white rounded-3xl p-3 text-gray-800">
