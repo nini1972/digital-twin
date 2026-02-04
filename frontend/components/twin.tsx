@@ -107,17 +107,11 @@ export default function Twin() {
             {/* Header */}
             <div className="relative bg-gradient-to-r from-slate-700 to-slate-800 text-white p-5 rounded-t-lg shadow-md">
                 <div className="flex items-center gap-3">
-                    {hasAvatar ? (
-                        <img
-                            src="/avatar.png"
-                            alt="Digital Twin Avatar"
-                            className="w-12 h-12 rounded-full border border-slate-300 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
-                        />
-                    ) : (
-                        <div className="w-12 h-12 bg-slate-600 rounded-full flex items-center justify-center shadow-inner">
-                            <Bot className="w-6 h-6 text-white" />
-                        </div>
-                    )}
+                    <img
+                        src="/favicon-180.png"   // <-- replace with your actual path
+                        alt="Brand Icon"
+                        className="w-9 h-9 rounded-md shadow-[0_0_10px_rgba(255,120,200,0.35)]"
+                    />
 
                     <div>
                         <h2 className="text-2xl font-semibold tracking-wide">
