@@ -149,7 +149,10 @@ export default function Twin() {
             {/* Welcome area – only when no messages yet */}
             {welcomePhase !== "hidden" && messages.length === 0 && (
                 <div className="flex flex-col items-center mt-14">
-                    {console.log("WELCOME BLOCK RENDERED")}
+                    {(() => {
+                        console.log("WELCOME BLOCK RENDERED, PHASE:", welcomePhase);
+                        return null;
+                    })()}
                     {welcomePhase === "text" && (
                         <div className="text-center text-gray-500 fade-out">
                             <p className="text-lg font-medium text-gray-700">
