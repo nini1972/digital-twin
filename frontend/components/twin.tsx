@@ -108,11 +108,15 @@ export default function Twin() {
             <div className="relative bg-gradient-to-r from-slate-700 to-slate-800 text-white p-5 rounded-t-lg shadow-md">
                 <div className="flex items-center gap-3">
                     <img
-                        src="/favicon-180.png"   // <-- replace with your actual path
+                        src="/favicon-180v1.png"   // <-- replace with your actual path
                         alt="Brand Icon"
                         className="w-9 h-9 rounded-md shadow-[0_0_10px_rgba(255,120,200,0.35)]"
                     />
-
+                    <img
+                        src="/favicon-180v2.png"
+                        alt="Brand Icon"
+                        className="w-9 h-9 rounded-md shadow-[0_0_10px_rgba(255,120,200,0.35)]"
+                    />
                     <div>
                         <h2 className="text-2xl font-semibold tracking-wide">
                             AI Digital Twin
