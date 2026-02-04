@@ -22,16 +22,26 @@ export default function Twin() {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
-    const [welcomePhase, setWelcomePhase] = useState<"text" | "video" | "avatar" | "hidden">("text");
+    const [welcomePhase, setWelcomePhase] = useState<
+        "text" | "fade" | "video" | "avatar" | "hidden"
+    >("text");
 
     // sequence: text -> video -> avatar
     useEffect(() => {
-        // 1) text visible for 2s, then fade out + switch to video
-        const textTimer = setTimeout(() => {
-            setWelcomePhase("video");
-        }, 2000); // adjust duration as you like
+        // Start fade after 2 seconds
+        const fadeTimer = setTimeout(() => {
+            setWelcomePhase("fade");
+        }, 2000);
 
-        return () => clearTimeout(textTimer);
+        // After fade completes, switch to video
+        const videoTimer = setTimeout(() => {
+            setWelcomePhase("video");
+        }, 2700); // 2000ms delay + 700ms fade
+
+        return () => {
+            clearTimeout(fadeTimer);
+            clearTimeout(videoTimer);
+        };
     }, []);
 
     useEffect(() => {
@@ -125,7 +135,7 @@ export default function Twin() {
     return (
         <div className="flex flex-col h-full bg-gray-50 rounded-lg shadow-lg">
             {/* Header */}
-            <div className="relative bg-gradient-to-r from-slate-700 to-slate-800 text-white p-5 rounded-t-lg shadow-md">
+            <div className="relative bg-linear-to-r from-slate-700 to-slate-800 text-white p-5 rounded-t-lg shadow-md">
                 <div className="flex items-center gap-3">
                     <img
                         src="/favicon-180v2.png"
@@ -143,45 +153,42 @@ export default function Twin() {
                 </div>
 
                 {/* Accent line */}
-                <div className="mt-4 h-[2px] w-full bg-gradient-to-r from-pink-400/40 to-purple-400/40 rounded-full"></div>
+                <div className="mt-4 h-0.5 w-full bg-linear-to-r from-pink-400/40 to-purple-400/40 rounded-full"></div>
             </div>
 
             {/* Welcome area – only when no messages yet */}
-            {welcomePhase !== "hidden" && messages.length === 0 && (
-                <div className="flex flex-col items-center mt-14">
-                    {(() => {
-                        console.log("WELCOME BLOCK RENDERED, PHASE:", welcomePhase);
-                        return null;
-                    })()}
-                    {welcomePhase === "text" && (
-                        <div className="text-center text-gray-500 fade-out">
-                            <p className="text-lg font-medium text-gray-700">
-                                Hello! I'm your Digital Twin.
-                            </p>
-                            <p className="text-sm mt-2 text-gray-500">
-                                Ask me anything about AI deployment.
-                            </p>
-                        </div>
-                    )}
-                    {welcomePhase === "video" && (
-                        <video
-                            src="/avatar-blink.mp4"
-                            autoPlay
-                            muted
-                            playsInline
-                            className="w-32 h-32 mt-4 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
-                            onEnded={() => setWelcomePhase("avatar")}
-                        />
-                    )}
-
-                    {welcomePhase === "avatar" && (
-                        <img
-                            src="/avatar.png"
-                            alt="Digital Twin Avatar"
-                            className="w-32 h-32 mt-4 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
-                        />
-                    )}
+            {welcomePhase === "text" || welcomePhase === "fade" ? (
+                <div
+                    className={`text-center text-gray-500 ${welcomePhase === "fade" ? "welcome-fade" : "welcome-visible"
+                        }`}
+                >
+                    <p className="text-lg font-medium text-gray-700">
+                        Hello! I'm your Digital Twin.
+                    </p>
+                    <p className="text-sm mt-2 text-gray-500">
+                        Ask me anything about AI deployment.
+                    </p>
                 </div>
+            ) : null}
+
+
+            {welcomePhase === "video" && (
+                <video
+                    src="/avatar-blink.mp4"
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-32 h-32 mt-4 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
+                    onEnded={() => setWelcomePhase("avatar")}
+                />
+            )}
+
+            {welcomePhase === "avatar" && (
+                <img
+                    src="/avatar.png"
+                    alt="Digital Twin Avatar"
+                    className="w-32 h-32 mt-4 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
+                />
             )}
 
             {/* Messages */}
@@ -194,7 +201,7 @@ export default function Twin() {
                     >
                         {message.role === 'assistant' ? (
                             <>
-                                <div className="flex-shrink-0">
+                                <div className="shrink-0">
                                     <img
                                         src="/avatar.png"
                                         alt="Digital Twin Avatar"
@@ -202,7 +209,7 @@ export default function Twin() {
                                     />
                                 </div>
 
-                                <div className="p-[2px] rounded-3xl bg-gradient-to-r from-pink-400 to-purple-400 max-w-[70%]">
+                                <div className="p-0.5 rounded-3xl bg-linear-to-r from-pink-400 to-purple-400 max-w-[70%]">
                                     <div className="bg-white rounded-3xl p-3 text-gray-800">
                                         <p className="whitespace-pre-wrap">{message.content}</p>
                                         <p className="text-xs mt-1 text-gray-500">
@@ -222,7 +229,7 @@ export default function Twin() {
 
 
                         {message.role === 'user' && (
-                            <div className="flex-shrink-0">
+                            <div className="shrink-0">
                                 <div className="w-12 h-12 bg-gray-600 rounded-full flex items-center justify-center">
                                     <User className="w-5 h-5 text-white" />
                                 </div>
@@ -233,7 +240,7 @@ export default function Twin() {
 
                 {isLoading && (
                     <div className="flex gap-3 justify-start">
-                        <div className="flex-shrink-0">
+                        <div className="shrink-0">
                             {hasAvatar ? (
                                 <img
                                     src="/avatar.png"
@@ -248,9 +255,9 @@ export default function Twin() {
                         </div>
                         <div className="bg-white border border-gray-200 rounded-3xl p-3 shadow-[0_0_12px_rgba(255,120,200,0.35)] animate-pulse">
                             <div className="flex space-x-2">
-                                <div className="w-2 h-2 rounded-full animate-bounce bg-gradient-to-br from-pink-400 to-purple-400" />
-                                <div className="w-2 h-2 rounded-full animate-bounce delay-100 bg-gradient-to-br from-purple-400 to-pink-300" />
-                                <div className="w-2 h-2 rounded-full animate-bounce delay-200 bg-gradient-to-br from-pink-300 to-purple-300" />
+                                <div className="w-2 h-2 rounded-full animate-bounce bg-linear-to-br from-pink-400 to-purple-400" />
+                                <div className="w-2 h-2 rounded-full animate-bounce delay-100 bg-linear-to-br from-purple-400 to-pink-300" />
+                                <div className="w-2 h-2 rounded-full animate-bounce delay-200 bg-linear-to-br from-pink-300 to-purple-300" />
                             </div>
                         </div>
                     </div>
@@ -278,6 +285,7 @@ export default function Twin() {
                         disabled={!input.trim() || isLoading}
                         className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
+                        <span className="sr-only">Send message</span>
                         <Send className="w-5 h-5" />
                     </button>
                 </div>
