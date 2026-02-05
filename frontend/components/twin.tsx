@@ -45,7 +45,8 @@ export default function Twin() {
     }, []);
 
     useEffect(() => {
-        if (messages.length > 0) {
+        const hasUserMessage = messages.some((message) => message.role === 'user');
+        if (hasUserMessage) {
             // user started chatting → hide entire welcome area
             setWelcomePhase("hidden");
         }
@@ -171,7 +172,7 @@ export default function Twin() {
                         }`}
                 >
                     <p className="text-lg font-medium text-gray-700">
-                        Hello! I'm your Digital Twin.
+                        Hello! I’m your Digital Twin.
                     </p>
                     <p className="text-sm mt-2 text-gray-500">
                         Ask me anything about AI deployment.
