@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User } from 'lucide-react';
 
@@ -146,10 +147,13 @@ export default function Twin() {
             {/* Header */}
             <div className="relative bg-linear-to-r from-slate-700 to-slate-800 text-white p-5 rounded-t-lg shadow-md">
                 <div className="flex items-center gap-3">
-                    <img
+                    <Image
                         src="/favicon-180v2.png"
                         alt="Brand Icon"
+                        width={36}
+                        height={36}
                         className="w-9 h-9 rounded-md shadow-[0_0_10px_rgba(255,120,200,0.35)]"
+                        priority
                     />
                     <div>
                         <h2 className="text-2xl font-semibold tracking-wide">
@@ -197,19 +201,25 @@ export default function Twin() {
             {/* Welcome avatar */}
             {welcomePhase === "avatar" && (
                 <div className="flex justify-center mt-8">
-                    <img
+                    <Image
                         src="/avatar.png"
                         alt="Digital Twin Avatar"
+                        width={128}
+                        height={128}
                         className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)] avatar-fade-in avatar-breath"
+                        priority
                     />
                 </div>
             )}
             {welcomePhase === "avatar-fade-out" && (
                 <div className="flex justify-center mt-8">
-                    <img
+                    <Image
                         src="/avatar.png"
                         alt="Digital Twin Avatar"
+                        width={128}
+                        height={128}
                         className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)] avatar-fade-out"
+                        priority
                     />
                 </div>
             )}
@@ -225,9 +235,11 @@ export default function Twin() {
                         {message.role === 'assistant' ? (
                             <>
                                 <div className="shrink-0">
-                                    <img
+                                    <Image
                                         src="/avatar.png"
                                         alt="Digital Twin Avatar"
+                                        width={48}
+                                        height={48}
                                         className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
                                     />
                                 </div>
@@ -265,9 +277,11 @@ export default function Twin() {
                     <div className="flex gap-3 justify-start">
                         <div className="shrink-0">
                             {hasAvatar ? (
-                                <img
+                                <Image
                                     src="/avatar.png"
                                     alt="Digital Twin Avatar"
+                                    width={48}
+                                    height={48}
                                     className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
                                 />
                             ) : (
