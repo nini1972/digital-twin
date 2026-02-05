@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Bot, User } from 'lucide-react';
 
 interface Message {
@@ -18,6 +18,7 @@ export default function Twin() {
     const [sessionId, setSessionId] = useState<string>('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const avatarFadeOutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -26,6 +27,20 @@ export default function Twin() {
     const [welcomePhase, setWelcomePhase] = useState<
         "text" | "fade" | "video" | "avatar" | "avatar-fade-out" | "hidden"
     >("text");
+
+    const triggerAvatarFadeOut = useCallback(() => {
+        if (welcomePhase !== "avatar") return;
+        setWelcomePhase("avatar-fade-out");
+
+        if (avatarFadeOutTimerRef.current) {
+            clearTimeout(avatarFadeOutTimerRef.current);
+        }
+
+        avatarFadeOutTimerRef.current = setTimeout(() => {
+            setWelcomePhase("hidden");
+            avatarFadeOutTimerRef.current = null;
+        }, 700);
+    }, [welcomePhase]);
 
     // sequence: text -> video -> avatar
     useEffect(() => {
@@ -56,6 +71,20 @@ export default function Twin() {
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
+
+    useEffect(() => {
+        if (input.trim() && welcomePhase === "avatar") {
+            triggerAvatarFadeOut();
+        }
+    }, [input, welcomePhase, triggerAvatarFadeOut]);
+
+    useEffect(() => {
+        return () => {
+            if (avatarFadeOutTimerRef.current) {
+                clearTimeout(avatarFadeOutTimerRef.current);
+            }
+        };
+    }, []);
 
     const sendMessage = async () => {
         if (!input.trim() || isLoading) return;
