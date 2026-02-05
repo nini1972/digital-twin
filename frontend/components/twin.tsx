@@ -159,7 +159,7 @@ export default function Twin() {
             {/* Welcome text */}
             {(welcomePhase === "text" || welcomePhase === "fade") && (
                 <div
-                    className={`text-center text-gray-500 mt-20 ${welcomePhase === "fade" ? "welcome-fade" : "welcome-visible"
+                    className={`text-center text-gray-500 mt-20 welcome-slide-up ${welcomePhase === "fade" ? "welcome-fade" : "welcome-visible"
                         }`}
                 >
                     <p className="text-lg font-medium text-gray-700">
@@ -179,7 +179,7 @@ export default function Twin() {
                         autoPlay
                         muted
                         playsInline
-                        className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
+                        className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)] avatar-fade-in"
                         onEnded={() => setWelcomePhase("avatar")}
                     />
                 </div>
@@ -191,7 +191,7 @@ export default function Twin() {
                     <img
                         src="/avatar.png"
                         alt="Digital Twin Avatar"
-                        className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)]"
+                        className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)] avatar-fade-in avatar-breath"
                     />
                 </div>
             )}
