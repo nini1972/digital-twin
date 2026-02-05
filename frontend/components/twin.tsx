@@ -30,19 +30,16 @@ export default function Twin() {
     >("text");
 
     const fadeOutWelcomeAvatar = useCallback(() => {
-        if (welcomePhase === "avatar") {
-            setWelcomePhase("avatar-fade-out");
-            if (avatarFadeOutTimerRef.current) {
-                clearTimeout(avatarFadeOutTimerRef.current);
-            }
-            avatarFadeOutTimerRef.current = setTimeout(() => {
-                setWelcomePhase("hidden");
-                avatarFadeOutTimerRef.current = null;
-            }, 700);
-            return;
-        }
+        if (welcomePhase !== "avatar") return;
 
-        setWelcomePhase("hidden");
+        setWelcomePhase("avatar-fade-out");
+        if (avatarFadeOutTimerRef.current) {
+            clearTimeout(avatarFadeOutTimerRef.current);
+        }
+        avatarFadeOutTimerRef.current = setTimeout(() => {
+            setWelcomePhase("hidden");
+            avatarFadeOutTimerRef.current = null;
+        }, 700);
     }, [welcomePhase]);
 
     // sequence: text -> video -> avatar
@@ -65,8 +62,9 @@ export default function Twin() {
 
     useEffect(() => {
         if (!hasUserSent) return;
+        if (welcomePhase !== "avatar") return;
         fadeOutWelcomeAvatar();
-    }, [hasUserSent, fadeOutWelcomeAvatar]);
+    }, [hasUserSent, welcomePhase, fadeOutWelcomeAvatar]);
 
     useEffect(() => {
         scrollToBottom();
