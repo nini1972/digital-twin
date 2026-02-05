@@ -28,18 +28,20 @@ export default function Twin() {
         "text" | "fade" | "video" | "avatar" | "avatar-fade-out" | "hidden"
     >("text");
 
-    const triggerAvatarFadeOut = useCallback(() => {
-        if (welcomePhase !== "avatar") return;
-        setWelcomePhase("avatar-fade-out");
-
-        if (avatarFadeOutTimerRef.current) {
-            clearTimeout(avatarFadeOutTimerRef.current);
+    const fadeOutWelcomeAvatar = useCallback(() => {
+        if (welcomePhase === "avatar") {
+            setWelcomePhase("avatar-fade-out");
+            if (avatarFadeOutTimerRef.current) {
+                clearTimeout(avatarFadeOutTimerRef.current);
+            }
+            avatarFadeOutTimerRef.current = setTimeout(() => {
+                setWelcomePhase("hidden");
+                avatarFadeOutTimerRef.current = null;
+            }, 700);
+            return;
         }
 
-        avatarFadeOutTimerRef.current = setTimeout(() => {
-            setWelcomePhase("hidden");
-            avatarFadeOutTimerRef.current = null;
-        }, 700);
+        setWelcomePhase("hidden");
     }, [welcomePhase]);
 
     // sequence: text -> video -> avatar
@@ -61,22 +63,13 @@ export default function Twin() {
     }, []);
 
     useEffect(() => {
-        const hasUserMessage = messages.some((message) => message.role === 'user');
-        if (hasUserMessage) {
-            // user started chatting → hide entire welcome area
-            setWelcomePhase("hidden");
-        }
-    }, [messages]);
+        if (messages.length === 0) return;
+        fadeOutWelcomeAvatar();
+    }, [messages.length, fadeOutWelcomeAvatar]);
 
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
-
-    useEffect(() => {
-        if (input.trim() && welcomePhase === "avatar") {
-            triggerAvatarFadeOut();
-        }
-    }, [input, welcomePhase, triggerAvatarFadeOut]);
 
     useEffect(() => {
         return () => {
@@ -88,15 +81,6 @@ export default function Twin() {
 
     const sendMessage = async () => {
         if (!input.trim() || isLoading) return;
-
-        if (welcomePhase === "avatar") {
-            setWelcomePhase("avatar-fade-out");
-
-            // After fade-out animation completes
-            setTimeout(() => {
-                setWelcomePhase("hidden");
-            }, 700);
-        }
 
         const userMessage: Message = {
             id: Date.now().toString(),
