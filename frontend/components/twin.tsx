@@ -58,6 +58,8 @@ export default function Twin() {
     }, [messages]);
 
     const sendMessage = async () => {
+        if (!input.trim() || isLoading) return;
+
         if (welcomePhase === "avatar") {
             setWelcomePhase("avatar-fade-out");
 
@@ -66,7 +68,6 @@ export default function Twin() {
                 setWelcomePhase("hidden");
             }, 700);
         }
-        if (!input.trim() || isLoading) return;
 
         const userMessage: Message = {
             id: Date.now().toString(),
