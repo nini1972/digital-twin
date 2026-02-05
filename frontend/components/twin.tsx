@@ -23,7 +23,7 @@ export default function Twin() {
     };
 
     const [welcomePhase, setWelcomePhase] = useState<
-        "text" | "fade" | "video" | "avatar" | "hidden"
+        "text" | "fade" | "video" | "avatar" | "avatar-fade-out" | "hidden"
     >("text");
 
     // sequence: text -> video -> avatar
@@ -56,6 +56,14 @@ export default function Twin() {
     }, [messages]);
 
     const sendMessage = async () => {
+        if (welcomePhase === "avatar") {
+            setWelcomePhase("avatar-fade-out");
+
+            // After fade-out animation completes
+            setTimeout(() => {
+                setWelcomePhase("hidden");
+            }, 700);
+        }
         if (!input.trim() || isLoading) return;
 
         const userMessage: Message = {
@@ -192,6 +200,15 @@ export default function Twin() {
                         src="/avatar.png"
                         alt="Digital Twin Avatar"
                         className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)] avatar-fade-in avatar-breath"
+                    />
+                </div>
+            )}
+            {welcomePhase === "avatar-fade-out" && (
+                <div className="flex justify-center mt-8">
+                    <img
+                        src="/avatar.png"
+                        alt="Digital Twin Avatar"
+                        className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)] avatar-fade-out"
                     />
                 </div>
             )}
