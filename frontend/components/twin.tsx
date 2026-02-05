@@ -16,6 +16,7 @@ export default function Twin() {
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [sessionId, setSessionId] = useState<string>('');
+    const [hasUserSent, setHasUserSent] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const avatarFadeOutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,9 +64,9 @@ export default function Twin() {
     }, []);
 
     useEffect(() => {
-        if (messages.length === 0) return;
+        if (!hasUserSent) return;
         fadeOutWelcomeAvatar();
-    }, [messages.length, fadeOutWelcomeAvatar]);
+    }, [hasUserSent, fadeOutWelcomeAvatar]);
 
     useEffect(() => {
         scrollToBottom();
@@ -90,6 +91,7 @@ export default function Twin() {
         };
 
         setMessages(prev => [...prev, userMessage]);
+        setHasUserSent(true);
         setInput('');
         setIsLoading(true);
 
