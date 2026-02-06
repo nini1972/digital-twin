@@ -20,9 +20,13 @@ export default function Twin() {
     const inputRef = useRef<HTMLInputElement>(null);
     const avatarFadeOutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+        });
+    }, [messages]);
+
 
     const [welcomePhase, setWelcomePhase] = useState<
         "text" | "fade" | "video" | "avatar" | "avatar-fade-out" | "hidden"
@@ -241,9 +245,10 @@ export default function Twin() {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto pt-8 px-4 pb-4 space-y-4">
-                {messages.map((message) => (
+                {messages.map((message, index) => (
                     <div
                         key={message.id}
+                        ref={index === messages.length - 1 ? messagesEndRef : null}
                         className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'
                             }`}
                     >
@@ -314,8 +319,6 @@ export default function Twin() {
                         </div>
                     </div>
                 )}
-
-                <div ref={messagesEndRef} />
             </div>
 
             {/* Input */}
