@@ -74,9 +74,7 @@ export default function Twin() {
         };
     }, []);
 
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages]);
+
 
     useEffect(() => {
         return () => {
