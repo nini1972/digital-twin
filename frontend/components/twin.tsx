@@ -28,30 +28,41 @@ export default function Twin() {
         "text" | "fade" | "video" | "avatar" | "avatar-fade-out" | "hidden"
     >("text");
 
+    // ⭐ FIXED: Fade-out logic that ALWAYS works
     const fadeOutWelcomeAvatar = useCallback(() => {
-        if (welcomePhase !== "avatar") return;
+        if (welcomePhase === "hidden" || welcomePhase === "avatar-fade-out") return;
 
+        // If user sends message early, jump straight to avatar
+        if (
+            welcomePhase === "text" ||
+            welcomePhase === "fade" ||
+            welcomePhase === "video"
+        ) {
+            setWelcomePhase("avatar");
+        }
+
+        // Trigger fade-out
         setWelcomePhase("avatar-fade-out");
+
         if (avatarFadeOutTimerRef.current) {
             clearTimeout(avatarFadeOutTimerRef.current);
         }
+
         avatarFadeOutTimerRef.current = setTimeout(() => {
             setWelcomePhase("hidden");
             avatarFadeOutTimerRef.current = null;
         }, 700);
     }, [welcomePhase]);
 
-    // sequence: text -> video -> avatar
+    // ⭐ Welcome sequence: text → fade → video → avatar
     useEffect(() => {
-        // Start fade after 2 seconds
         const fadeTimer = setTimeout(() => {
             setWelcomePhase("fade");
         }, 2000);
 
-        // After fade completes, switch to video
         const videoTimer = setTimeout(() => {
             setWelcomePhase("video");
-        }, 2700); // 2000ms delay + 700ms fade
+        }, 2700);
 
         return () => {
             clearTimeout(fadeTimer);
@@ -74,6 +85,9 @@ export default function Twin() {
     const sendMessage = async () => {
         if (!input.trim() || isLoading) return;
 
+        // Trigger fade-out of welcome avatar
+        fadeOutWelcomeAvatar();
+
         const userMessage: Message = {
             id: Date.now().toString(),
             role: 'user',
@@ -81,7 +95,6 @@ export default function Twin() {
             timestamp: new Date(),
         };
 
-        fadeOutWelcomeAvatar();
         setMessages(prev => [...prev, userMessage]);
         setInput('');
         setIsLoading(true);
@@ -89,9 +102,7 @@ export default function Twin() {
         try {
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/chat`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     message: userMessage.content,
                     session_id: sessionId || undefined,
@@ -125,10 +136,7 @@ export default function Twin() {
             setMessages(prev => [...prev, errorMessage]);
         } finally {
             setIsLoading(false);
-            // Refocus the input after message is sent
-            setTimeout(() => {
-                inputRef.current?.focus();
-            }, 100);
+            setTimeout(() => inputRef.current?.focus(), 100);
         }
     };
 
@@ -142,15 +150,14 @@ export default function Twin() {
     // Check if avatar exists
     const [hasAvatar, setHasAvatar] = useState(false);
     useEffect(() => {
-        // Check if avatar.png exists
         fetch('/avatar.png', { method: 'HEAD' })
             .then(res => setHasAvatar(res.ok))
             .catch(() => setHasAvatar(false));
     }, []);
 
-
     return (
         <div className="flex flex-col h-full bg-gray-50 rounded-lg shadow-lg">
+
             {/* Header */}
             <div className="relative bg-linear-to-r from-slate-700 to-slate-800 text-white p-5 rounded-t-lg shadow-md">
                 <div className="flex items-center gap-3">
@@ -172,7 +179,6 @@ export default function Twin() {
                     </div>
                 </div>
 
-                {/* Accent line */}
                 <div className="mt-4 h-0.5 w-full bg-linear-to-r from-pink-400/40 to-purple-400/40 rounded-full"></div>
             </div>
 
@@ -218,6 +224,8 @@ export default function Twin() {
                     />
                 </div>
             )}
+
+            {/* Fade-out avatar */}
             {welcomePhase === "avatar-fade-out" && (
                 <div className="flex justify-center mt-8">
                     <Image
@@ -269,7 +277,6 @@ export default function Twin() {
                             </div>
                         )}
 
-
                         {message.role === 'user' && (
                             <div className="shrink-0">
                                 <div className="w-12 h-12 bg-gray-600 rounded-full flex items-center justify-center">
@@ -297,6 +304,7 @@ export default function Twin() {
                                 </div>
                             )}
                         </div>
+
                         <div className="bg-white border border-gray-200 rounded-3xl p-3 shadow-[0_0_12px_rgba(255,120,200,0.35)] animate-pulse">
                             <div className="flex space-x-2">
                                 <div className="w-2 h-2 rounded-full animate-bounce bg-linear-to-br from-pink-400 to-purple-400" />
