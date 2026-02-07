@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 export default function LandingPage() {
   const router = useRouter();
   const [isEntering, setIsEntering] = useState(false);
   const [showUI, setShowUI] = useState(false);
+  const ambientRef = useRef<{ stop: () => void } | null>(null);
 
   useEffect(() => {
     if (!isEntering) return;
     const timer = setTimeout(() => {
+      // stop ambient before navigating
+      ambientRef.current?.stop();
       void router.push("/twin");
     }, 600);
     return () => clearTimeout(timer);
@@ -22,6 +25,70 @@ export default function LandingPage() {
     const fallback = setTimeout(() => setShowUI(true), 9000);
     return () => clearTimeout(fallback);
   }, []);
+
+  // Start a lightweight ambient pad using Web Audio when the UI is revealed
+  useEffect(() => {
+    if (!showUI) return;
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new AudioCtx();
+    const master = ctx.createGain();
+    master.gain.value = 0.12;
+    master.connect(ctx.destination);
+
+    const createPad = (freq: number, type: OscillatorType) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.detune.value = (Math.random() - 0.5) * 10;
+      gain.gain.value = 0.35;
+      filter.type = "lowpass";
+      filter.frequency.value = 1200;
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(master);
+      osc.start();
+      return { osc, gain, filter };
+    };
+
+    const p1 = createPad(110, "sawtooth");
+    const p2 = createPad(165, "triangle");
+
+    // slow LFO to modulate filter for an evolving pad
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.type = "sine";
+    lfo.frequency.value = 0.04;
+    lfoGain.gain.value = 450;
+    lfo.connect(lfoGain);
+    lfoGain.connect(p1.filter.frequency);
+    lfo.start();
+
+    // gentle randomized amplitude ramps every few seconds
+    const interval = window.setInterval(() => {
+      const now = ctx.currentTime;
+      p1.gain.gain.linearRampToValueAtTime(0.2 + Math.random() * 0.4, now + 4);
+      p2.gain.gain.linearRampToValueAtTime(0.1 + Math.random() * 0.35, now + 5);
+    }, 5200);
+
+    ambientRef.current = {
+      stop: () => {
+        try {
+          clearInterval(interval);
+          lfo.stop();
+          p1.osc.stop();
+          p2.osc.stop();
+          ctx.close();
+        } catch { }
+        ambientRef.current = null;
+      },
+    };
+
+    return () => {
+      ambientRef.current?.stop();
+    };
+  }, [showUI]);
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-black text-white">
