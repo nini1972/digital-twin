@@ -31,8 +31,8 @@ export default function LandingPage() {
         autoPlay
         muted
         playsInline
+        preload="auto"
         onEnded={() => setShowUI(true)}
-        poster="/digital-twin-hero.png"
       >
         <source src="/digital-twin-hero.mp4" type="video/mp4" />
       </video>
