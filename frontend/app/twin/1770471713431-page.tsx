@@ -58,21 +58,21 @@ export default function LandingPage() {
     <main className="relative h-screen w-full overflow-hidden bg-black text-white">
       {/* Background video (plays once); place digital-twin-hero.mp4 in /public */}
       <video
-        {...({ fetchpriority: "high" } as any)}
-        ref={videoRef}
-        className="absolute inset-0 h-full w-full object-cover opacity-90"
-        autoPlay
-        muted
-        playsInline
-        preload="auto"
-        decoding="async"
-        width={1920}
-        height={1080}
-        onEnded={() => setShowUI(true)}
-        onPlay={playSyncedAudio}
-      >
-        <source src="/digital-twin-hero.mp4" type="video/mp4" />
-      </video>
+  {...({ fetchpriority: "high" } as any)}
+  ref={videoRef}
+  className="absolute inset-0 h-full w-full object-cover opacity-90"
+  autoPlay
+  muted
+  playsInline
+  preload="auto"
+  decoding="async"
+  width={1920}
+  height={1080}
+  onEnded={() => setShowUI(true)}
+  onPlay={playSyncedAudio}
+>
+  <source src="/digital-twin-hero.mp4" type="video/mp4" />
+</video>
 
       <audio ref={audioRef} src="/digital-twin-sound.mp3" preload="auto" />
 
