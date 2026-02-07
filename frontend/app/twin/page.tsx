@@ -18,49 +18,43 @@ export default function LandingPage() {
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-black text-white">
-
-      {/* Background image */}
-      <div className="absolute inset-0">
-        <img
-          src="/digital-twin-hero.png"
-          alt="Digital Twin Motion Art"
-          className="h-full w-full object-cover opacity-80"
-        />
-      </div>
+      {/* Background video (8s loop); place digital-twin-hero.mp4 in /public */}
+      <video
+        className="absolute inset-0 h-full w-full object-cover opacity-90"
+        autoPlay
+        loop
+        muted
+        playsInline
+        poster="/digital-twin-hero.png"
+      >
+        <source src="/digital-twin-hero.mp4" type="video/mp4" />
+      </video>
 
       {/* Dark overlay */}
-      <div className="absolute inset-0 bg-black/40" />
+      <div className="absolute inset-0 bg-black/45" />
 
-      {/* Centered content */}
-      <div className="relative z-10 flex flex-col items-center justify-center h-full text-center px-6">
-
-        <h1 className="text-5xl font-bold tracking-wide mb-4">
-          A WOMAN AND HER DIGITAL TWIN
-        </h1>
-
-        <p className="text-lg text-gray-300 mb-12">
+      {/* Content */}
+      <div className="relative z-10 flex flex-col items-center h-full text-center px-6">
+        <p className="mt-12 text-lg font-semibold text-cyan-200 drop-shadow-[0_0_12px_rgba(120,220,255,0.5)]">
           Enter a space where your intelligence is mirrored, amplified, and brought to life.
         </p>
 
-        {/* FUN DOOR */}
-        <div
-          onClick={() => setIsEntering(true)}
-          className={`
-            w-24 h-48 rounded-sm mb-12 cursor-pointer transition-all duration-700
-            bg-white/20 border border-white/30
-            hover:bg-white/30 hover:shadow-[0_0_25px_rgba(255,255,255,0.6)]
-            ${isEntering ? "scale-150 opacity-0" : ""}
-          `}
-        />
+        {/* Spacer to keep center area clear of the video text */}
+        <div className="flex-1" />
 
-        {/* Enter button (backup navigation) */}
-        <Link href="/twin">
-          <button className="px-8 py-3 border border-white/40 rounded-lg hover:border-white transition-all">
-            Enter the Room
-          </button>
+        {/* Subtle entry button */}
+        <button
+          onClick={() => setIsEntering(true)}
+          className="mb-16 px-8 py-3 rounded-full border border-white/30 bg-white/10 backdrop-blur-md text-white/90 hover:bg-white/20 hover:border-white/50 transition-all shadow-[0_0_18px_rgba(120,220,255,0.35)]"
+        >
+          Enter the Room
+        </button>
+
+        {/* Backup link (optional) */}
+        <Link href="/twin" className="text-sm text-white/70 hover:text-white/100 mb-6">
+          Having trouble? Go now →
         </Link>
 
-        {/* Auto‑navigate after animation */}
         {isEntering && null}
       </div>
     </main>
