@@ -8,15 +8,16 @@ export default function LandingPage() {
   const router = useRouter();
   const [isEntering, setIsEntering] = useState(false);
   const [showUI, setShowUI] = useState(false);
-  const ambientRef = useRef<{ stop: () => void } | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const gestureListenersRef = useRef<() => void | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!isEntering) return;
     const timer = setTimeout(() => {
-      // stop ambient before navigating
-      ambientRef.current?.stop();
+      // stop audio before navigating
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
       void router.push("/twin");
     }, 600);
     return () => clearTimeout(timer);
@@ -28,115 +29,6 @@ export default function LandingPage() {
     return () => clearTimeout(fallback);
   }, []);
 
-  // Start a lightweight ambient pad using Web Audio when the UI is revealed,
-  // but only actually initialize sound after a user gesture (resume).
-  useEffect(() => {
-    if (!showUI) return;
-
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    const ctx = new AudioCtx();
-    audioCtxRef.current = ctx;
-
-    let intervalId: number | null = null;
-    let lfo: OscillatorNode | null = null;
-
-    const createPadNodes = (c: AudioContext) => {
-      const master = c.createGain();
-      master.gain.value = 0.12;
-      master.connect(c.destination);
-
-      const makePad = (freq: number, type: OscillatorType) => {
-        const osc = c.createOscillator();
-        const gain = c.createGain();
-        const filter = c.createBiquadFilter();
-        osc.type = type;
-        osc.frequency.value = freq;
-        osc.detune.value = (Math.random() - 0.5) * 10;
-        gain.gain.value = 0.35;
-        filter.type = "lowpass";
-        filter.frequency.value = 1200;
-        osc.connect(filter);
-        filter.connect(gain);
-        gain.connect(master);
-        osc.start();
-        return { osc, gain, filter };
-      };
-
-      const p1 = makePad(110, "sawtooth");
-      const p2 = makePad(165, "triangle");
-
-      lfo = c.createOscillator();
-      const lfoGain = c.createGain();
-      lfo.type = "sine";
-      lfo.frequency.value = 0.04;
-      lfoGain.gain.value = 450;
-      lfo.connect(lfoGain);
-      lfoGain.connect((p1.filter as BiquadFilterNode).frequency);
-      lfo.start();
-
-      intervalId = window.setInterval(() => {
-        const now = c.currentTime;
-        p1.gain.gain.linearRampToValueAtTime(0.2 + Math.random() * 0.4, now + 4);
-        p2.gain.gain.linearRampToValueAtTime(0.1 + Math.random() * 0.35, now + 5);
-      }, 5200);
-
-      ambientRef.current = {
-        stop: () => {
-          try {
-            if (intervalId) clearInterval(intervalId);
-            lfo?.stop();
-            p1.osc.stop();
-            p2.osc.stop();
-            c.close();
-          } catch { }
-          ambientRef.current = null;
-        },
-      };
-    };
-
-    const resumeAndStart = async () => {
-      try {
-        if (!audioCtxRef.current) return;
-        if (audioCtxRef.current.state === "suspended") {
-          await audioCtxRef.current.resume();
-        }
-        if (!ambientRef.current) createPadNodes(audioCtxRef.current);
-      } catch { }
-      // remove gesture listeners after first resume
-      removeGestureListeners();
-    };
-
-    const addGestureListeners = () => {
-      const handler = () => void resumeAndStart();
-      document.addEventListener("click", handler, { once: true });
-      document.addEventListener("touchstart", handler, { once: true });
-      document.addEventListener("keydown", handler, { once: true });
-      gestureListenersRef.current = () => {
-        document.removeEventListener("click", handler);
-        document.removeEventListener("touchstart", handler);
-        document.removeEventListener("keydown", handler);
-      };
-    };
-
-    const removeGestureListeners = () => {
-      gestureListenersRef.current?.();
-      gestureListenersRef.current = null;
-    };
-
-    // If already running, start immediately; otherwise wait for gesture
-    if (ctx.state === "running") {
-      createPadNodes(ctx);
-    } else {
-      addGestureListeners();
-    }
-
-    return () => {
-      removeGestureListeners();
-      ambientRef.current?.stop();
-      audioCtxRef.current = null;
-    };
-  }, [showUI]);
-
   return (
     <main className="relative h-screen w-full overflow-hidden bg-black text-white">
       {/* Background video (plays once); place digital-twin-hero.mp4 in /public */}
@@ -147,9 +39,16 @@ export default function LandingPage() {
         playsInline
         preload="auto"
         onEnded={() => setShowUI(true)}
+        onPlay={() => {
+          audioRef.current?.play().catch(() => {
+            // autoplay may be blocked; user gesture required
+          });
+        }}
       >
         <source src="/digital-twin-hero.mp4" type="video/mp4" />
       </video>
+
+      <audio ref={audioRef} src="/digital-twin-sound.mp3" preload="auto" />
 
       {/* Dark overlay */}
       <div className="absolute inset-0 bg-black/45" />
@@ -168,11 +67,9 @@ export default function LandingPage() {
             {/* Subtle entry button */}
             <button
               onClick={async () => {
-                // ensure audio resumes on button click (user gesture) before navigating
+                // ensure audio starts if autoplay was blocked
                 try {
-                  if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
-                    await audioCtxRef.current.resume();
-                  }
+                  await audioRef.current?.play();
                 } catch { }
                 setIsEntering(true);
               }}
