@@ -9,6 +9,8 @@ export default function LandingPage() {
   const [isEntering, setIsEntering] = useState(false);
   const [showUI, setShowUI] = useState(false);
   const ambientRef = useRef<{ stop: () => void } | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const gestureListenersRef = useRef<() => void | null>(null);
 
   useEffect(() => {
     if (!isEntering) return;
@@ -26,67 +28,112 @@ export default function LandingPage() {
     return () => clearTimeout(fallback);
   }, []);
 
-  // Start a lightweight ambient pad using Web Audio when the UI is revealed
+  // Start a lightweight ambient pad using Web Audio when the UI is revealed,
+  // but only actually initialize sound after a user gesture (resume).
   useEffect(() => {
     if (!showUI) return;
+
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     const ctx = new AudioCtx();
-    const master = ctx.createGain();
-    master.gain.value = 0.12;
-    master.connect(ctx.destination);
+    audioCtxRef.current = ctx;
 
-    const createPad = (freq: number, type: OscillatorType) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const filter = ctx.createBiquadFilter();
-      osc.type = type;
-      osc.frequency.value = freq;
-      osc.detune.value = (Math.random() - 0.5) * 10;
-      gain.gain.value = 0.35;
-      filter.type = "lowpass";
-      filter.frequency.value = 1200;
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(master);
-      osc.start();
-      return { osc, gain, filter };
+    let intervalId: number | null = null;
+    let lfo: OscillatorNode | null = null;
+
+    const createPadNodes = (c: AudioContext) => {
+      const master = c.createGain();
+      master.gain.value = 0.12;
+      master.connect(c.destination);
+
+      const makePad = (freq: number, type: OscillatorType) => {
+        const osc = c.createOscillator();
+        const gain = c.createGain();
+        const filter = c.createBiquadFilter();
+        osc.type = type;
+        osc.frequency.value = freq;
+        osc.detune.value = (Math.random() - 0.5) * 10;
+        gain.gain.value = 0.35;
+        filter.type = "lowpass";
+        filter.frequency.value = 1200;
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(master);
+        osc.start();
+        return { osc, gain, filter };
+      };
+
+      const p1 = makePad(110, "sawtooth");
+      const p2 = makePad(165, "triangle");
+
+      lfo = c.createOscillator();
+      const lfoGain = c.createGain();
+      lfo.type = "sine";
+      lfo.frequency.value = 0.04;
+      lfoGain.gain.value = 450;
+      lfo.connect(lfoGain);
+      lfoGain.connect((p1.filter as BiquadFilterNode).frequency);
+      lfo.start();
+
+      intervalId = window.setInterval(() => {
+        const now = c.currentTime;
+        p1.gain.gain.linearRampToValueAtTime(0.2 + Math.random() * 0.4, now + 4);
+        p2.gain.gain.linearRampToValueAtTime(0.1 + Math.random() * 0.35, now + 5);
+      }, 5200);
+
+      ambientRef.current = {
+        stop: () => {
+          try {
+            if (intervalId) clearInterval(intervalId);
+            lfo?.stop();
+            p1.osc.stop();
+            p2.osc.stop();
+            c.close();
+          } catch { }
+          ambientRef.current = null;
+        },
+      };
     };
 
-    const p1 = createPad(110, "sawtooth");
-    const p2 = createPad(165, "triangle");
-
-    // slow LFO to modulate filter for an evolving pad
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-    lfo.type = "sine";
-    lfo.frequency.value = 0.04;
-    lfoGain.gain.value = 450;
-    lfo.connect(lfoGain);
-    lfoGain.connect(p1.filter.frequency);
-    lfo.start();
-
-    // gentle randomized amplitude ramps every few seconds
-    const interval = window.setInterval(() => {
-      const now = ctx.currentTime;
-      p1.gain.gain.linearRampToValueAtTime(0.2 + Math.random() * 0.4, now + 4);
-      p2.gain.gain.linearRampToValueAtTime(0.1 + Math.random() * 0.35, now + 5);
-    }, 5200);
-
-    ambientRef.current = {
-      stop: () => {
-        try {
-          clearInterval(interval);
-          lfo.stop();
-          p1.osc.stop();
-          p2.osc.stop();
-          ctx.close();
-        } catch { }
-        ambientRef.current = null;
-      },
+    const resumeAndStart = async () => {
+      try {
+        if (!audioCtxRef.current) return;
+        if (audioCtxRef.current.state === "suspended") {
+          await audioCtxRef.current.resume();
+        }
+        if (!ambientRef.current) createPadNodes(audioCtxRef.current);
+      } catch { }
+      // remove gesture listeners after first resume
+      removeGestureListeners();
     };
+
+    const addGestureListeners = () => {
+      const handler = () => void resumeAndStart();
+      document.addEventListener("click", handler, { once: true });
+      document.addEventListener("touchstart", handler, { once: true });
+      document.addEventListener("keydown", handler, { once: true });
+      gestureListenersRef.current = () => {
+        document.removeEventListener("click", handler);
+        document.removeEventListener("touchstart", handler);
+        document.removeEventListener("keydown", handler);
+      };
+    };
+
+    const removeGestureListeners = () => {
+      gestureListenersRef.current?.();
+      gestureListenersRef.current = null;
+    };
+
+    // If already running, start immediately; otherwise wait for gesture
+    if (ctx.state === "running") {
+      createPadNodes(ctx);
+    } else {
+      addGestureListeners();
+    }
 
     return () => {
+      removeGestureListeners();
       ambientRef.current?.stop();
+      audioCtxRef.current = null;
     };
   }, [showUI]);
 
@@ -120,7 +167,15 @@ export default function LandingPage() {
 
             {/* Subtle entry button */}
             <button
-              onClick={() => setIsEntering(true)}
+              onClick={async () => {
+                // ensure audio resumes on button click (user gesture) before navigating
+                try {
+                  if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+                    await audioCtxRef.current.resume();
+                  }
+                } catch { }
+                setIsEntering(true);
+              }}
               className="mb-4 px-8 py-3 rounded-full border border-white/30 bg-white/10 backdrop-blur-md text-white/90 hover:bg-white/20 hover:border-white/50 transition-all shadow-[0_0_18px_rgba(120,220,255,0.35)]"
             >
               Enter the Room

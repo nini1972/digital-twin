@@ -19,6 +19,9 @@ export default function Twin() {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const avatarFadeOutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const audioCtxRef = useRef<AudioContext | null>(null);
+    const ambientRef = useRef<{ stop: () => void } | null>(null);
+    const gestureRemoverRef = useRef<() => void | null>(null);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({
@@ -81,6 +84,10 @@ export default function Twin() {
             if (avatarFadeOutTimerRef.current) {
                 clearTimeout(avatarFadeOutTimerRef.current);
             }
+            // stop ambient and close audio on unmount
+            ambientRef.current?.stop();
+            audioCtxRef.current = null;
+            gestureRemoverRef.current?.();
         };
     }, []);
 
