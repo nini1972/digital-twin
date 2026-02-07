@@ -9,6 +9,8 @@ export default function LandingPage() {
   const [isEntering, setIsEntering] = useState(false);
   const [showUI, setShowUI] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
 
   useEffect(() => {
     if (!isEntering) return;
@@ -23,27 +25,47 @@ export default function LandingPage() {
     return () => clearTimeout(timer);
   }, [isEntering, router]);
 
-  // Reveal UI after the video finishes (with a fallback in case onEnded doesn't fire)
   useEffect(() => {
-    const fallback = setTimeout(() => setShowUI(true), 9000);
-    return () => clearTimeout(fallback);
-  }, []);
+    if (audioUnlocked) return;
+    const unlock = async () => {
+      try {
+        if (audioRef.current) {
+          await audioRef.current.play();
+          audioRef.current.pause();
+          setAudioUnlocked(true);
+        }
+      } catch { }
+    };
+    document.addEventListener("click", unlock, { once: true });
+    document.addEventListener("touchstart", unlock, { once: true });
+    document.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      document.removeEventListener("click", unlock);
+      document.removeEventListener("touchstart", unlock);
+      document.removeEventListener("keydown", unlock);
+    };
+  }, [audioUnlocked]);
+
+  const playSyncedAudio = async () => {
+    try {
+      if (!audioRef.current || !videoRef.current) return;
+      audioRef.current.currentTime = videoRef.current.currentTime || 0;
+      await audioRef.current.play();
+    } catch { }
+  };
 
   return (
     <main className="relative h-screen w-full overflow-hidden bg-black text-white">
       {/* Background video (plays once); place digital-twin-hero.mp4 in /public */}
       <video
+        ref={videoRef}
         className="absolute inset-0 h-full w-full object-cover opacity-90"
         autoPlay
         muted
         playsInline
         preload="auto"
         onEnded={() => setShowUI(true)}
-        onPlay={() => {
-          audioRef.current?.play().catch(() => {
-            // autoplay may be blocked; user gesture required
-          });
-        }}
+        onPlay={playSyncedAudio}
       >
         <source src="/digital-twin-hero.mp4" type="video/mp4" />
       </video>
@@ -66,11 +88,11 @@ export default function LandingPage() {
 
             {/* Subtle entry button */}
             <button
-              onClick={async () => {
-                // ensure audio starts if autoplay was blocked
-                try {
-                  await audioRef.current?.play();
-                } catch { }
+              onClick={() => {
+                if (audioRef.current) {
+                  audioRef.current.pause();
+                  audioRef.current.currentTime = 0;
+                }
                 setIsEntering(true);
               }}
               className="mb-4 px-8 py-3 rounded-full border border-white/30 bg-white/10 backdrop-blur-md text-white/90 hover:bg-white/20 hover:border-white/50 transition-all shadow-[0_0_18px_rgba(120,220,255,0.35)]"
