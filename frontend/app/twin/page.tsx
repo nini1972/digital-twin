@@ -64,6 +64,10 @@ export default function LandingPage() {
         muted
         playsInline
         preload="auto"
+        fetchpriority="high"
+        decoding="async"
+        width={1920}
+        height={1080}
         onEnded={() => setShowUI(true)}
         onPlay={playSyncedAudio}
       >
@@ -79,7 +83,7 @@ export default function LandingPage() {
       <div className="relative z-10 flex flex-col items-center h-full text-center px-6">
         {showUI && (
           <>
-            <p className="mt-8 text-lg font-semibold text-cyan-200 drop-shadow-[0_0_16px_rgba(120,220,255,0.6)]">
+            <p className="mt-8 text-lg font-semibold text-cyan-200 drop-shadow-[0_0_8px_rgba(120,220,255,0.4)]">
               Enter a space where your intelligence is mirrored, amplified, and brought to life.
             </p>
 
