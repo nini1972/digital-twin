@@ -230,7 +230,7 @@ bedrock_model_id  = "amazon.nova-pro-v1:0"
 bash scripts/deploy.sh prod twin
 ```
 
-Terraform will create an ACM certificate, validate it via DNS, and wire up Route 53 alias records pointing to CloudFront. The certificate must be issued in **us-east-1** (handled automatically).
+Terraform will request an ACM certificate, create the DNS validation records, and wire up Route 53 alias records for CloudFront. The certificate still must be issued in **us-east-1**. On a fresh production deploy, ACM issuance can take time, so the first apply/deploy may need to be rerun after DNS validation completes and the certificate is issued.
 
 ### Tear down
 
