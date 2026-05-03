@@ -119,14 +119,16 @@ Notes about how you communicate — tone, things you care about, phrases you lik
 
 Export your LinkedIn profile as a PDF (**Me → Resources → Save to PDF**) and place it here. The AI reads your full work history and skills from this file.
 
-### Optional media assets
+### Frontend media assets
 
-Place these files in `frontend/public/` for a richer welcome experience:
+Place these files in `frontend/public/`. In the current frontend, these assets are required for the default welcome and chat experience:
 
 | File | Description |
 |---|---|
-| `avatar.png` | Your photo, shown as the AI's avatar in the chat |
-| `avatar-blink.mp4` | A short looping video that plays during the welcome animation (e.g. a blinking avatar). If omitted the static image is used instead. |
+| `avatar.png` | Your photo, rendered as the AI's avatar in the welcome and chat views. |
+| `avatar-blink.mp4` | A short video used during the welcome animation (for example, a blinking avatar). The current welcome flow advances when this video finishes, so provide this file unless you also update the frontend to add a real fallback path. |
+
+> Note: These assets are not currently optional in the default frontend implementation.
 
 ---
 
