@@ -240,7 +240,7 @@ bash scripts/destroy.sh dev twin
 bash scripts/destroy.sh prod twin
 ```
 
-> **Note:** The S3 memory bucket is not automatically emptied before destruction. Run `aws s3 rm s3://<bucket> --recursive` first if Terraform complains about a non-empty bucket.
+> **Note:** The provided destroy scripts automatically empty the frontend and memory S3 buckets before running `terraform destroy`.
 
 ---
 
