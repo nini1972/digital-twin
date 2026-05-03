@@ -4,19 +4,17 @@ A serverless AI chatbot that lives on your professional website and represents *
 
 ```
 Visitor's browser
-      │
-      ▼
-CloudFront CDN ──── S3 (Next.js static site)
-      │
-      ▼
-API Gateway (HTTP)
-      │
-      ▼
-AWS Lambda (Python / FastAPI)
-      │           │
-      ▼           ▼
- AWS Bedrock    S3 (per-session conversation memory)
- (Nova LLM)
+  │                 │
+  │ serves frontend │ calls chat API
+  ▼                 ▼
+CloudFront CDN   API Gateway (HTTP)
+  │                 │
+  ▼                 ▼
+S3 (Next.js      AWS Lambda (Python / FastAPI)
+static site)        │                     │
+                    ▼                     ▼
+               AWS Bedrock         S3 (per-session conversation memory)
+               (Nova LLM)
 ```
 
 ---
