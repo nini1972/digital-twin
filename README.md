@@ -72,8 +72,8 @@ digital-twin/
 │   ├── components/
 │   │   └── twin.tsx            # Chat UI component
 │   └── public/
-│       ├── avatar.png          # Your photo (optional, displayed in chat)
-│       └── avatar-blink.mp4    # Short animated avatar video (optional)
+│       ├── avatar.png          # Your photo (required by the current chat UI)
+│       └── avatar-blink.mp4    # Short animated avatar video (required by the current welcome/chat UI)
 ├── terraform/
 │   ├── main.tf                 # All AWS resources
 │   ├── variables.tf            # Variable definitions
