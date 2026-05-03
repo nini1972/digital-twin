@@ -40,7 +40,7 @@ static site)        │                     │
 | [uv](https://docs.astral.sh/uv/) | Python package manager for the backend |
 | [Node.js](https://nodejs.org/) ≥ 20 | Next.js frontend |
 
-Your AWS credentials must have permissions for: Lambda, API Gateway, S3, CloudFront, IAM, Bedrock, and (optionally) Route 53 and ACM.
+Your AWS credentials must have permissions for: Lambda, API Gateway, S3, CloudFront, IAM, Bedrock, DynamoDB, and (optionally) Route 53 and ACM.
 
 You must also **enable the Bedrock model** you plan to use in the [AWS Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess) before deploying.
 
