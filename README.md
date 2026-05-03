@@ -65,10 +65,10 @@ digital-twin/
 │   └── requirements.txt        # Pinned requirements for Lambda packaging
 ├── frontend/
 │   ├── app/
-│   │   ├── twin/               # The chat page (/twin route)
+│   │   ├── twin/               # Current /twin route implementation (landing page)
 │   │   └── page.tsx            # Root redirect → /twin
 │   ├── components/
-│   │   └── twin.tsx            # Chat UI component
+│   │   └── twin.tsx            # Reusable chat UI component source (not currently mounted)
 │   └── public/
 │       ├── avatar.png          # Your photo (required by the current chat UI)
 │       └── avatar-blink.mp4    # Short animated avatar video (required by the current welcome/chat UI)
