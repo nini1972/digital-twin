@@ -161,7 +161,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The chat calls `http://localhost:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
+Open [http://localhost:3000/chat](http://localhost:3000/chat) to access the working chat UI. The chat calls `http://localhost:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
 
 ### Backend API endpoints
 
