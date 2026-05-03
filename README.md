@@ -28,7 +28,7 @@ AWS Lambda (Python / FastAPI)
 - **Jailbreak-resistant** — the system prompt instructs the model to refuse prompt-injection attempts
 - **Fully serverless** — Lambda + API Gateway, scales to zero when idle
 - **One-command deploy** — a single script builds the Lambda package, runs Terraform, and syncs the frontend to S3
-- **Optional custom domain** — Route 53 + ACM certificate wired up automatically
+- **Optional custom domain** — supports Route 53 + ACM certificate setup for a custom domain
 
 ---
 
