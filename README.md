@@ -236,7 +236,7 @@ aws iam create-open-id-connect-provider \
   --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
 
 # 2. Create the IAM role with a trust policy that allows your repo to assume it
-# Replace YOUR_GITHUB_ORG and YOUR_REPO_NAME below
+# Replace YOUR_ACCOUNT_ID, YOUR_GITHUB_ORG, and YOUR_REPO_NAME below
 cat > trust-policy.json <<'EOF'
 {
   "Version": "2012-10-17",
