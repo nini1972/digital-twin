@@ -179,7 +179,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing page experience, or go directly to [http://localhost:3000/chat](http://localhost:3000/chat) for the chat interface. The chat calls `http://localhost:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
+Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing page experience, or go directly to [http://localhost:3000/chat](http://localhost:3000/chat) for the chat interface. The chat calls `http://127.0.0.1:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
 
 ### Backend API endpoints
 
