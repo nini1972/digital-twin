@@ -65,13 +65,17 @@ digital-twin/
 │   └── requirements.txt        # Pinned requirements for Lambda packaging
 ├── frontend/
 │   ├── app/
-│   │   ├── twin/               # Current /twin route implementation (landing page)
+│   │   ├── twin/               # /twin route — cinematic landing / welcome page
+│   │   ├── chat/               # /chat route — the main chat interface
 │   │   └── page.tsx            # Root redirect → /twin
 │   ├── components/
-│   │   └── twin.tsx            # Reusable chat UI component source (not currently mounted)
+│   │   └── twin.tsx            # Chat UI component (mounted at /chat)
 │   └── public/
-│       ├── avatar.png          # Your photo (required by the current chat UI)
-│       └── avatar-blink.mp4    # Short animated avatar video (required by the current welcome/chat UI)
+│       ├── digital-twin-hero.mp4   # Hero video played on the /twin landing page
+│       ├── digital-twin-sound.mp3  # Ambient audio synced to the hero video
+│       ├── avatar.png              # Your photo — avatar shown in the chat interface
+│       ├── avatar-blink.mp4        # Short blink animation shown before the avatar appears
+│       └── favicon-180v2.png       # Brand icon displayed in the chat header
 ├── terraform/
 │   ├── main.tf                 # All AWS resources
 │   ├── variables.tf            # Variable definitions
@@ -84,6 +88,10 @@ digital-twin/
 │   ├── deploy.ps1              # Full deploy (Windows)
 │   ├── destroy.sh              # Tear down all AWS resources (Linux / macOS)
 │   └── destroy.ps1             # Tear down all AWS resources (Windows)
+├── .github/
+│   └── workflows/
+│       ├── deploy.yml          # CI/CD — deploy on push to main or manual dispatch
+│       └── destroy.yml         # Manual workflow to tear down an environment
 └── .env.example                # Environment variable template
 ```
 
@@ -121,14 +129,24 @@ Export your LinkedIn profile as a PDF (**Me → Resources → Save to PDF**) and
 
 ### Frontend media assets
 
-Place these files in `frontend/public/`. In the current frontend, these assets are required for the default welcome and chat experience:
+Place these files in `frontend/public/`. They are required by the default frontend and are split across the two routes:
+
+**Landing page (`/twin`)**
 
 | File | Description |
 |---|---|
-| `avatar.png` | Your photo, rendered as the AI's avatar in the welcome and chat views. |
-| `avatar-blink.mp4` | A short video used during the welcome animation (for example, a blinking avatar). The current welcome flow advances when this video finishes, so provide this file unless you also update the frontend to add a real fallback path. |
+| `digital-twin-hero.mp4` | Full-screen hero video that plays when visitors first arrive. The "Enter the Room" button appears once this video ends. |
+| `digital-twin-sound.mp3` | Ambient audio that plays in sync with the hero video (auto-unlocked on the first user interaction). |
 
-> Note: These assets are not currently optional in the default frontend implementation.
+**Chat interface (`/chat`)**
+
+| File | Description |
+|---|---|
+| `avatar.png` | Your photo, shown as the AI's avatar throughout the chat view and during the welcome sequence. |
+| `avatar-blink.mp4` | Short blink animation played just before the static avatar fades in. The chat welcome sequence advances when this video ends. |
+| `favicon-180v2.png` | Brand icon displayed in the chat header. |
+
+> Note: None of these assets are optional in the default frontend implementation — omitting any of them will break the corresponding part of the UI unless you update the frontend accordingly.
 
 ---
 
@@ -161,7 +179,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000/chat](http://localhost:3000/chat) to access the working chat UI. The chat calls `http://localhost:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
+Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing page experience, or go directly to [http://localhost:3000/chat](http://localhost:3000/chat) for the chat interface. The chat calls `http://127.0.0.1:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
 
 ### Backend API endpoints
 
@@ -171,6 +189,93 @@ Open [http://localhost:3000/chat](http://localhost:3000/chat) to access the work
 | `GET` | `/health` | Health check |
 | `POST` | `/chat` | Send a message, receive a reply |
 | `GET` | `/conversation/{session_id}` | Retrieve conversation history |
+
+---
+
+## GitHub Actions CI/CD
+
+The repository ships with two GitHub Actions workflows that automate deployment and teardown — no need to run scripts locally once the pipeline is set up.
+
+### Workflows
+
+| Workflow | File | Trigger |
+|---|---|---|
+| **Deploy Digital Twin** | `.github/workflows/deploy.yml` | Push to `main` (→ `dev`) or manual dispatch with environment choice |
+| **Destroy Environment** | `.github/workflows/destroy.yml` | Manual dispatch only — requires typing the environment name to confirm |
+
+#### Deploy workflow
+- Triggered automatically on every push to `main` (deploys to `dev`).
+- Can also be triggered manually from the **Actions** tab to deploy to `dev`, `test`, or `prod`.
+- Uses OIDC to assume an IAM role — no long-lived AWS credentials are stored in GitHub.
+- After Terraform applies, CloudFront is automatically invalidated to serve the latest frontend.
+
+#### Destroy workflow
+- Manual only. You must select an environment **and** type its name again to confirm — a deliberate safety gate.
+
+### One-time GitHub setup
+
+#### 1. Create GitHub Environments
+
+In your repository go to **Settings → Environments** and create three environments: `dev`, `test`, and `prod`. Add the secrets below to each environment (or at the repository level if they are shared across all environments):
+
+| Secret | Description |
+|---|---|
+| `AWS_ROLE_ARN` | ARN of the IAM role the workflow will assume (e.g. `arn:aws:iam::123456789012:role/github-actions-deploy`) |
+| `AWS_ACCOUNT_ID` | Your 12-digit AWS account ID |
+| `DEFAULT_AWS_REGION` | AWS region, e.g. `us-east-1` |
+
+#### 2. Create an IAM role for OIDC
+
+The workflow uses `aws-actions/configure-aws-credentials` with `role-to-assume`. You need an IAM role that trusts the GitHub Actions OIDC provider.
+
+```bash
+# 1. Add the GitHub OIDC provider to your account (once per account)
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+
+# 2. Create the IAM role with a trust policy that allows your repo to assume it
+# Replace YOUR_ACCOUNT_ID, YOUR_GITHUB_ORG, and YOUR_REPO_NAME in all three places below
+cat > trust-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::YOUR_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": [
+            "repo:YOUR_GITHUB_ORG/YOUR_REPO_NAME:environment:dev",
+            "repo:YOUR_GITHUB_ORG/YOUR_REPO_NAME:environment:test",
+            "repo:YOUR_GITHUB_ORG/YOUR_REPO_NAME:environment:prod"
+          ]
+        }
+      }
+    }
+  ]
+}
+EOF
+
+aws iam create-role \
+  --role-name github-actions-deploy \
+  --assume-role-policy-document file://trust-policy.json
+```
+
+Attach the same permissions your AWS user would need for a manual deploy (Lambda, API Gateway, S3, CloudFront, IAM, Bedrock, DynamoDB, and optionally Route 53/ACM):
+
+```bash
+aws iam attach-role-policy \
+  --role-name github-actions-deploy \
+  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess   # Scope this down for production
+```
+
+> **Tip:** For production, replace `AdministratorAccess` with a custom policy limited to the specific services used by Terraform.
 
 ---
 
