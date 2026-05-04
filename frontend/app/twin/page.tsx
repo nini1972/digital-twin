@@ -20,7 +20,7 @@ export default function LandingPage() {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
       }
-      void router.push("/twin");
+      void router.push("/chat");
     }, 600);
     return () => clearTimeout(timer);
   }, [isEntering, router]);
@@ -58,7 +58,7 @@ export default function LandingPage() {
     <main className="relative h-screen w-full overflow-hidden bg-black text-white">
       {/* Background video (plays once); place digital-twin-hero.mp4 in /public */}
       <video
-        {...({ fetchpriority: "high" } as any)}
+        {...({ fetchPriority: "high" } as any)}
         ref={videoRef}
         className="absolute inset-0 h-full w-full object-cover opacity-90"
         autoPlay
@@ -105,7 +105,7 @@ export default function LandingPage() {
             </button>
 
             {/* Backup link (optional) */}
-            <Link href="/twin" className="text-sm text-white/70 hover:text-white mb-6">
+            <Link href="/chat" className="text-sm text-white/70 hover:text-white mb-6">
               Having trouble? Go now →
             </Link>
           </>
