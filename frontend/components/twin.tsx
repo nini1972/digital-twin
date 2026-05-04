@@ -22,6 +22,17 @@ export default function Twin() {
     const audioCtxRef = useRef<AudioContext | null>(null);
     const ambientRef = useRef<{ stop: () => void } | null>(null);
     const gestureRemoverRef = useRef<() => void | null>(null);
+    const [tilt, setTilt] = useState({ x: 0, y: 0 });
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            const x = (window.innerWidth / 2 - e.clientX) / 35;
+            const y = (window.innerHeight / 2 - e.clientY) / 35;
+            setTilt({ x, y });
+        };
+        window.addEventListener('mousemove', handleMouseMove);
+        return () => window.removeEventListener('mousemove', handleMouseMove);
+    }, []);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({
@@ -222,15 +233,20 @@ export default function Twin() {
 
             {/* Welcome avatar */}
             {welcomePhase === "avatar" && (
-                <div className="flex justify-center mt-8">
-                    <Image
-                        src="/avatar.png"
-                        alt="Digital Twin Avatar"
-                        width={128}
-                        height={128}
-                        className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)] avatar-fade-in avatar-breath"
-                        priority
-                    />
+                <div className="flex justify-center mt-8" style={{ perspective: "1000px" }}>
+                    <div 
+                        className="transition-transform duration-75 ease-out" 
+                        style={{ transform: `rotateY(${-tilt.x}deg) rotateX(${tilt.y}deg)` }}
+                    >
+                        <Image
+                            src="/avatar.png"
+                            alt="Digital Twin Avatar"
+                            width={128}
+                            height={128}
+                            className="w-32 h-32 rounded-full shadow-[0_0_20px_rgba(255,120,200,0.4)] avatar-fade-in avatar-breath"
+                            priority
+                        />
+                    </div>
                 </div>
             )}
 
@@ -306,7 +322,7 @@ export default function Twin() {
                                     alt="Digital Twin Avatar"
                                     width={48}
                                     height={48}
-                                    className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_10px_rgba(255,120,200,0.4)]"
+                                    className="w-12 h-12 rounded-full border border-slate-300 mr-1 shadow-[0_0_15px_rgba(120,220,255,0.8)] animate-pulse"
                                 />
                             ) : (
                                 <div className="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center">
