@@ -194,7 +194,7 @@ Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing pa
 
 ## GitHub Actions CI/CD
 
-The repository ships with two reusable GitHub Actions workflows that automate deployment and teardown — no need to run scripts locally once the pipeline is set up.
+The repository ships with two GitHub Actions workflows that automate deployment and teardown — no need to run scripts locally once the pipeline is set up.
 
 ### Workflows
 
