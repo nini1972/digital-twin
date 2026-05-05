@@ -107,3 +107,44 @@ def save_market_event(event_type: str, description: str):
     ''', (datetime.now().isoformat(), event_type, description))
     conn.commit()
     conn.close()
+
+def load_telemetry(limit: int = 50) -> dict:
+    """Return the last `limit` telemetry rows and recent market events."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT timestamp, weather, active_hubs, avg_price, total_queue
+        FROM telemetry
+        ORDER BY id DESC
+        LIMIT ?
+    ''', (limit,))
+    rows = cursor.fetchall()
+    telemetry = [
+        {
+            "timestamp": row["timestamp"],
+            "weather": row["weather"],
+            "active_hubs": row["active_hubs"],
+            "avg_price": row["avg_price"],
+            "total_queue": row["total_queue"],
+        }
+        for row in reversed(rows)
+    ]
+
+    cursor.execute('''
+        SELECT timestamp, event_type, description
+        FROM market_events
+        ORDER BY id DESC
+        LIMIT ?
+    ''', (min(limit, 20),))
+    event_rows = cursor.fetchall()
+    events = [
+        {
+            "timestamp": row["timestamp"],
+            "event_type": row["event_type"],
+            "description": row["description"],
+        }
+        for row in reversed(event_rows)
+    ]
+
+    conn.close()
+    return {"telemetry": telemetry, "events": events}

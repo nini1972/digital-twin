@@ -18,7 +18,7 @@ dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path)
 from contextlib import asynccontextmanager
 
-from database import init_db, load_conversation_history, save_messages, save_telemetry, save_market_event
+from database import init_db, load_conversation_history, save_messages, save_telemetry, save_market_event, load_telemetry
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -50,6 +50,7 @@ except Exception as e:
     openai_client = None
 
 LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "gpt-4o-mini")
+ALLOW_CODE_EXECUTION = os.getenv("ALLOW_CODE_EXECUTION", "false").lower() == "true"
 
 # Memory storage configuration
 USE_S3 = os.getenv("USE_S3", "false").lower() == "true"
@@ -192,7 +193,7 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
             "type": "function",
             "function": {
                 "name": "set_global_parameters",
-                "description": "Update global simulation parameters like charging speed and battery drain rate to test extreme scenarios.",
+                "description": "Update global simulation parameters like charging speed, battery drain rate, and hub-selection weights.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -203,6 +204,14 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                         "battery_drain": {
                             "type": "number",
                             "description": "The amount of battery % a resident drains per tick while driving. Default is 0.2."
+                        },
+                        "distance_weight": {
+                            "type": "number",
+                            "description": "Weight applied to distance-squared when residents score hubs. Higher = residents prioritise proximity. Default is 1.0."
+                        },
+                        "price_weight": {
+                            "type": "number",
+                            "description": "Weight applied to hub price when residents score hubs. Higher = residents prioritise cheaper hubs. Default is 50.0."
                         }
                     }
                 }
@@ -332,7 +341,11 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                         engine.global_charging_speed = float(function_args["charging_speed"])
                     if "battery_drain" in function_args:
                         engine.global_battery_drain = float(function_args["battery_drain"])
-                    result_body = {"status": "success", "message": f"Updated parameters: charging_speed={engine.global_charging_speed}, battery_drain={engine.global_battery_drain}"}
+                    if "distance_weight" in function_args:
+                        engine.distance_weight = float(function_args["distance_weight"])
+                    if "price_weight" in function_args:
+                        engine.price_weight = float(function_args["price_weight"])
+                    result_body = {"status": "success", "message": f"Updated parameters: charging_speed={engine.global_charging_speed}, battery_drain={engine.global_battery_drain}, distance_weight={engine.distance_weight}, price_weight={engine.price_weight}"}
                     print(f"Oracle executed tool: Set global parameters.")
                 elif function_name == "set_weather":
                     condition = function_args.get("condition", "sunny")
@@ -369,27 +382,33 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                         result_body = {"status": "error", "message": f"Hub {hub_id} not found."}
                     print(f"Oracle executed tool: Set hub price.")
                 elif function_name == "execute_python":
-                    code = function_args.get("code", "")
-                    import io
-                    import sys
-                    import sqlite3
-                    old_stdout = sys.stdout
-                    redirected_output = sys.stdout = io.StringIO()
-                    try:
-                        db_path = os.path.join(os.path.dirname(__file__), 'data', 'simulation.db')
-                        local_vars = {
-                            "engine": engine,
-                            "sqlite3": sqlite3,
-                            "os": os,
-                            "DB_PATH": db_path
+                    if not ALLOW_CODE_EXECUTION:
+                        result_body = {
+                            "status": "disabled",
+                            "message": "Python code execution is disabled on this server. Set ALLOW_CODE_EXECUTION=true to enable it."
                         }
-                        exec(code, {}, local_vars)
-                        output = redirected_output.getvalue()
-                        result_body = {"status": "success", "output": output}
-                    except Exception as e:
-                        result_body = {"status": "error", "message": str(e)}
-                    finally:
-                        sys.stdout = old_stdout
+                    else:
+                        code = function_args.get("code", "")
+                        import io
+                        import sys
+                        import sqlite3
+                        old_stdout = sys.stdout
+                        redirected_output = sys.stdout = io.StringIO()
+                        try:
+                            db_path = os.path.join(os.path.dirname(__file__), 'data', 'simulation.db')
+                            local_vars = {
+                                "engine": engine,
+                                "sqlite3": sqlite3,
+                                "os": os,
+                                "DB_PATH": db_path
+                            }
+                            exec(code, {}, local_vars)
+                            output = redirected_output.getvalue()
+                            result_body = {"status": "success", "output": output}
+                        except Exception as e:
+                            result_body = {"status": "error", "message": str(e)}
+                        finally:
+                            sys.stdout = old_stdout
                     print(f"Oracle executed python code.")
                 else:
                     result_body = {"status": "error", "message": "Unknown tool."}
@@ -480,6 +499,15 @@ async def get_conversation(session_id: str):
         return {"session_id": session_id, "messages": conversation}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/telemetry")
+async def get_telemetry(limit: int = 50):
+    """Return historical telemetry and market events for sparkline charts."""
+    try:
+        return load_telemetry(limit=min(limit, 200))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Removed legacy startup event in favor of lifespan context manager
 
