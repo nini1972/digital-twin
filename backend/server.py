@@ -10,13 +10,28 @@ import uuid
 from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError
+from openai import OpenAI
 from context import prompt
 from simulation import engine
 # Load environment variables from the root .env file
 dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path)
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+from database import init_db, load_conversation_history, save_messages, save_telemetry, save_market_event
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize SQLite database
+    init_db()
+    # Start the background simulation loop
+    task = asyncio.create_task(engine.run())
+    yield
+    # Shutdown
+    engine.running = False
+    task.cancel()
+
+app = FastAPI(lifespan=lifespan)
 
 # Configure CORS
 app.add_middleware(
@@ -27,19 +42,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Bedrock client
-bedrock_client = boto3.client(
-    service_name="bedrock-runtime", 
-    region_name=os.getenv("DEFAULT_AWS_REGION", "us-east-1")
-)
+# Initialize OpenAI client
+try:
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+except Exception as e:
+    print(f"Warning: Failed to initialize OpenAI client: {e}")
+    openai_client = None
 
-# Bedrock model selection
-# Available models:
-# - amazon.nova-micro-v1:0  (fastest, cheapest)
-# - amazon.nova-lite-v1:0   (balanced - default)
-# - amazon.nova-pro-v1:0    (most capable, higher cost)
-# Remember the Heads up: you might need to add us. or eu. prefix to the below model id
-BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
+LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "gpt-4o-mini")
 
 # Memory storage configuration
 USE_S3 = os.getenv("USE_S3", "false").lower() == "true"
@@ -72,9 +82,8 @@ class Message(BaseModel):
 def get_memory_path(session_id: str) -> str:
     return f"{session_id}.json"
 
-
 def load_conversation(session_id: str) -> List[Dict]:
-    """Load conversation history from storage"""
+    """Load conversation history from SQLite database"""
     if USE_S3:
         try:
             response = s3_client.get_object(Bucket=S3_BUCKET, Key=get_memory_path(session_id))
@@ -84,16 +93,10 @@ def load_conversation(session_id: str) -> List[Dict]:
                 return []
             raise
     else:
-        # Local file storage
-        file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
-        if os.path.exists(file_path):
-            with open(file_path, "r") as f:
-                return json.load(f)
-        return []
-
+        return load_conversation_history(session_id)
 
 def save_conversation(session_id: str, messages: List[Dict]):
-    """Save conversation history to storage"""
+    """Save conversation history to SQLite database"""
     if USE_S3:
         s3_client.put_object(
             Bucket=S3_BUCKET,
@@ -102,179 +105,325 @@ def save_conversation(session_id: str, messages: List[Dict]):
             ContentType="application/json",
         )
     else:
-        # Local file storage
-        os.makedirs(MEMORY_DIR, exist_ok=True)
-        file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
-        with open(file_path, "w") as f:
-            json.dump(messages, f, indent=2)
+        save_messages(session_id, messages)
 
 
-def call_bedrock(conversation: List[Dict], user_message: str) -> str:
-    """Call AWS Bedrock with conversation history"""
+def call_llm(conversation: List[Dict], user_message: str) -> str:
+    """Call LLM API with conversation history and tool calling"""
+    if not openai_client:
+        raise HTTPException(status_code=500, detail="OpenAI client is not initialized")
     
-    # Build messages in Bedrock format
+    # Build messages in OpenAI format
     messages = []
     
-    # Add system prompt as first user message (Bedrock convention)
+    # Add system prompt
     sim_state = engine.get_state() if 'engine' in globals() else None
     messages.append({
-        "role": "user", 
-        "content": [{"text": f"System: {prompt(sim_state)}"}]
+        "role": "system", 
+        "content": prompt(sim_state)
     })
     
-    # Add conversation history (limit to last 10 exchanges to manage context)
-    for msg in conversation[-20:]:  # Last 10 back-and-forth exchanges
+    # Add conversation history
+    for msg in conversation[-20:]:  # Last 20 messages
         messages.append({
             "role": msg["role"],
-            "content": [{"text": msg["content"]}]
+            "content": msg["content"]
         })
     
     # Add current user message
     messages.append({
         "role": "user",
-        "content": [{"text": user_message}]
+        "content": user_message
     })
     
-    try:
-        # Call Bedrock using the converse API
-        toolConfig = {
-            "tools": [
-                {
-                    "toolSpec": {
-                        "name": "add_resident_agents",
-                        "description": "Add a specified number of resident EV agents to the city simulation.",
-                        "inputSchema": {
-                            "json": {
-                                "type": "object",
-                                "properties": {
-                                    "count": {
-                                        "type": "integer",
-                                        "description": "The number of resident agents to add. Default is 1."
-                                    }
-                                },
-                                "required": ["count"]
-                            }
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "add_resident_agents",
+                "description": "Add a specified number of resident EV agents to the city simulation.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "count": {
+                            "type": "integer",
+                            "description": "The number of resident agents to add. Default is 1."
                         }
-                    }
-                },
-                {
-                    "toolSpec": {
-                        "name": "add_charging_hubs",
-                        "description": "Add a specified number of charging hubs to the city simulation.",
-                        "inputSchema": {
-                            "json": {
-                                "type": "object",
-                                "properties": {
-                                    "count": {
-                                        "type": "integer",
-                                        "description": "The number of charging hubs to add. Default is 1."
-                                    }
-                                },
-                                "required": ["count"]
-                            }
+                    },
+                    "required": ["count"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "add_charging_hubs",
+                "description": "Add a specified number of charging hubs to the city simulation.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "count": {
+                            "type": "integer",
+                            "description": "The number of charging hubs to add. Default is 1."
+                        }
+                    },
+                    "required": ["count"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "trigger_surge_event",
+                "description": "Trigger a traffic or power surge event by instantly dropping the battery of a random subset of residents to a critical level (<20%).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "percentage": {
+                            "type": "integer",
+                            "description": "Percentage of residents affected (1 to 100). Default is 25."
+                        }
+                    },
+                    "required": ["percentage"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "set_global_parameters",
+                "description": "Update global simulation parameters like charging speed and battery drain rate to test extreme scenarios.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "charging_speed": {
+                            "type": "number",
+                            "description": "The amount of battery % a hub restores per tick. Default is 5.0."
+                        },
+                        "battery_drain": {
+                            "type": "number",
+                            "description": "The amount of battery % a resident drains per tick while driving. Default is 0.2."
                         }
                     }
                 }
-            ]
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "set_weather",
+                "description": "Change the simulation weather, which affects EV battery drain and charging speed. Options: 'sunny' (normal), 'storm' (high drain, slow charge), 'extreme_heat' (max drain).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "condition": {
+                            "type": "string",
+                            "enum": ["sunny", "storm", "extreme_heat"],
+                            "description": "The weather condition to apply."
+                        }
+                    },
+                    "required": ["condition"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "trigger_maintenance",
+                "description": "Simulate a hardware failure or maintenance event by randomly disabling one active charging hub.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "set_hub_price",
+                "description": "Manually set the electricity price for a specific charging hub.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "hub_id": {
+                            "type": "string",
+                            "description": "The ID of the hub, e.g., 'hub_0'"
+                        },
+                        "price": {
+                            "type": "number",
+                            "description": "The new price per kWh"
+                        }
+                    },
+                    "required": ["hub_id", "price"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "execute_python",
+                "description": "Execute a python snippet to perform custom calculations based on simulation data. The 'engine' variable is available in the local scope.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "The python code to execute. Print the final result so it can be captured in stdout."
+                        }
+                    },
+                    "required": ["code"]
+                }
+            }
         }
+    ]
 
-        response = bedrock_client.converse(
-            modelId=BEDROCK_MODEL_ID,
+    try:
+        response = openai_client.chat.completions.create(
+            model=LLM_MODEL_ID,
             messages=messages,
-            inferenceConfig={
-                "maxTokens": 2000,
-                "temperature": 0.7,
-                "topP": 0.9
-            },
-            toolConfig=toolConfig
+            tools=tools,
+            temperature=0.7,
+            max_tokens=2000,
         )
         
-        output_message = response["output"]["message"]
-        messages.append(output_message)
-
-        # Check if model wants to use tools
-        tool_uses = [c["toolUse"] for c in output_message.get("content", []) if "toolUse" in c]
+        response_message = response.choices[0].message
         
-        if tool_uses:
-            tool_results = []
-            for tool_use in tool_uses:
-                name = tool_use["name"]
-                tool_input = tool_use["input"]
-                tool_use_id = tool_use["toolUseId"]
+        # Check if the model wants to call functions
+        tool_calls = response_message.tool_calls
+        
+        if tool_calls:
+            # We must append the assistant's message with tool_calls
+            messages.append(response_message)
+            
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+                try:
+                    function_args = json.loads(tool_call.function.arguments)
+                except:
+                    function_args = {}
                 
-                # Execute tool
-                if name == "add_resident_agents":
-                    count = tool_input.get("count", 1)
+                if function_name == "add_resident_agents":
+                    count = function_args.get("count", 1)
                     from simulation import ResidentAgent
                     for _ in range(count):
                         new_res = ResidentAgent(f"res_{len(engine.residents)}")
                         engine.residents.append(new_res)
                     result_body = {"status": "success", "message": f"Added {count} residents."}
                     print(f"Oracle executed tool: Added {count} residents.")
-                elif name == "add_charging_hubs":
-                    count = tool_input.get("count", 1)
+                elif function_name == "add_charging_hubs":
+                    count = function_args.get("count", 1)
                     from simulation import ChargingHubAgent
                     for _ in range(count):
                         new_hub = ChargingHubAgent(f"hub_{len(engine.hubs)}")
                         engine.hubs.append(new_hub)
                     result_body = {"status": "success", "message": f"Added {count} hubs."}
                     print(f"Oracle executed tool: Added {count} hubs.")
+                elif function_name == "trigger_surge_event":
+                    import random
+                    percentage = function_args.get("percentage", 25)
+                    affected_count = max(1, int(len(engine.residents) * (percentage / 100)))
+                    affected_agents = random.sample(engine.residents, min(affected_count, len(engine.residents)))
+                    for res in affected_agents:
+                        res.battery = random.uniform(5, 20)
+                    result_body = {"status": "success", "message": f"Triggered surge event affecting {len(affected_agents)} residents."}
+                    print(f"Oracle executed tool: Triggered surge event ({percentage}%).")
+                elif function_name == "set_global_parameters":
+                    if "charging_speed" in function_args:
+                        engine.global_charging_speed = float(function_args["charging_speed"])
+                    if "battery_drain" in function_args:
+                        engine.global_battery_drain = float(function_args["battery_drain"])
+                    result_body = {"status": "success", "message": f"Updated parameters: charging_speed={engine.global_charging_speed}, battery_drain={engine.global_battery_drain}"}
+                    print(f"Oracle executed tool: Set global parameters.")
+                elif function_name == "set_weather":
+                    condition = function_args.get("condition", "sunny")
+                    engine.weather = condition
+                    if condition == "sunny":
+                        engine.global_battery_drain = 0.2
+                        engine.global_charging_speed = 5.0
+                    elif condition == "storm":
+                        engine.global_battery_drain = 0.5
+                        engine.global_charging_speed = 2.0
+                    elif condition == "extreme_heat":
+                        engine.global_battery_drain = 0.8
+                        engine.global_charging_speed = 4.0
+                    result_body = {"status": "success", "message": f"Weather set to {condition}. Parameters updated accordingly."}
+                    print(f"Oracle executed tool: Set weather to {condition}.")
+                elif function_name == "trigger_maintenance":
+                    import random
+                    active_hubs = [h for h in engine.hubs if h.active]
+                    if active_hubs:
+                        hub_to_disable = random.choice(active_hubs)
+                        hub_to_disable.active = False
+                        result_body = {"status": "success", "message": f"Disabled hub {hub_to_disable.id} for maintenance."}
+                    else:
+                        result_body = {"status": "error", "message": "No active hubs to disable."}
+                    print(f"Oracle executed tool: Triggered maintenance.")
+                elif function_name == "set_hub_price":
+                    hub_id = function_args.get("hub_id")
+                    price = function_args.get("price")
+                    hub = next((h for h in engine.hubs if h.id == hub_id), None)
+                    if hub:
+                        hub.price = float(price)
+                        result_body = {"status": "success", "message": f"Set {hub_id} price to {price}."}
+                    else:
+                        result_body = {"status": "error", "message": f"Hub {hub_id} not found."}
+                    print(f"Oracle executed tool: Set hub price.")
+                elif function_name == "execute_python":
+                    code = function_args.get("code", "")
+                    import io
+                    import sys
+                    import sqlite3
+                    old_stdout = sys.stdout
+                    redirected_output = sys.stdout = io.StringIO()
+                    try:
+                        db_path = os.path.join(os.path.dirname(__file__), 'data', 'simulation.db')
+                        local_vars = {
+                            "engine": engine,
+                            "sqlite3": sqlite3,
+                            "os": os,
+                            "DB_PATH": db_path
+                        }
+                        exec(code, {}, local_vars)
+                        output = redirected_output.getvalue()
+                        result_body = {"status": "success", "output": output}
+                    except Exception as e:
+                        result_body = {"status": "error", "message": str(e)}
+                    finally:
+                        sys.stdout = old_stdout
+                    print(f"Oracle executed python code.")
                 else:
                     result_body = {"status": "error", "message": "Unknown tool."}
                 
-                tool_results.append({
-                    "toolResult": {
-                        "toolUseId": tool_use_id,
-                        "content": [{"json": result_body}]
-                    }
+                messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": json.dumps(result_body),
                 })
             
-            # Send tool results back to Bedrock
-            messages.append({
-                "role": "user",
-                "content": tool_results
-            })
-            
-            final_response = bedrock_client.converse(
-                modelId=BEDROCK_MODEL_ID,
+            # Second call to OpenAI with tool results
+            second_response = openai_client.chat.completions.create(
+                model=LLM_MODEL_ID,
                 messages=messages,
-                inferenceConfig={
-                    "maxTokens": 2000,
-                    "temperature": 0.7,
-                    "topP": 0.9
-                },
-                toolConfig=toolConfig
+                temperature=0.7,
+                max_tokens=2000,
             )
-            
-            final_message = final_response["output"]["message"]
-            texts = [c["text"] for c in final_message.get("content", []) if "text" in c]
-            return " ".join(texts)
+            return second_response.choices[0].message.content or ""
 
-        # Extract the response text if no tools were used
-        texts = [c["text"] for c in output_message.get("content", []) if "text" in c]
-        return " ".join(texts)
+        return response_message.content or ""
         
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == 'ValidationException':
-            # Handle message format issues
-            print(f"Bedrock validation error: {e}")
-            raise HTTPException(status_code=400, detail="Invalid message format for Bedrock")
-        elif error_code == 'AccessDeniedException':
-            print(f"Bedrock access denied: {e}")
-            raise HTTPException(status_code=403, detail="Access denied to Bedrock model")
-        else:
-            print(f"Bedrock error: {e}")
-            raise HTTPException(status_code=500, detail=f"Bedrock error: {str(e)}")
+    except Exception as e:
+        print(f"LLM error: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
 
 
 @app.get("/")
 async def root():
     return {
-        "message": "AI Digital Twin API (Powered by AWS Bedrock)",
+        "message": "AI Digital Twin API (Powered by OpenAI)",
         "memory_enabled": True,
         "storage": "S3" if USE_S3 else "local",
-        "ai_model": BEDROCK_MODEL_ID
+        "ai_model": LLM_MODEL_ID
     }
 
 
@@ -283,7 +432,7 @@ async def health_check():
     return {
         "status": "healthy", 
         "use_s3": USE_S3,
-        "bedrock_model": BEDROCK_MODEL_ID
+        "bedrock_model": LLM_MODEL_ID
     }
 
 
@@ -296,8 +445,8 @@ async def chat(request: ChatRequest):
         # Load conversation history
         conversation = load_conversation(session_id)
 
-        # Call Bedrock for response
-        assistant_response = call_bedrock(conversation, request.message)
+        # Call LLM for response
+        assistant_response = call_llm(conversation, request.message)
 
         # Update conversation history
         conversation.append(
@@ -332,10 +481,7 @@ async def get_conversation(session_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.on_event("startup")
-async def startup_event():
-    # Start the background simulation loop
-    asyncio.create_task(engine.run())
+# Removed legacy startup event in favor of lifespan context manager
 
 @app.websocket("/ws/simulation")
 async def simulation_websocket(websocket: WebSocket):

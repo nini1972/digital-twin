@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { Send, Bot, User, Loader2 } from "lucide-react";
 
 type Resident = { id: string; x: number; y: number; battery: number; charging: boolean };
-type Hub = { id: string; x: number; y: number; price: number; queue: number };
+type Hub = { id: string; x: number; y: number; price: number; queue: number; active: boolean };
 type SimState = { residents: Resident[]; hubs: Hub[] };
 
 export default function SimulationPage() {
@@ -145,39 +145,51 @@ export default function SimulationPage() {
               {simState.hubs.map((hub) => (
                 <g key={hub.id} className="transition-all duration-[500ms] ease-out" transform={`translate(${hub.x}, ${hub.y})`}>
                   {/* Radar pulse effect */}
-                  <circle r="8" className="fill-pink-500/10 stroke-pink-500/30 stroke-[0.2] animate-ping" style={{ animationDuration: '3s' }} />
-                  <circle r="5" className="fill-pink-500/20 stroke-pink-500/50 stroke-[0.5]" />
-                  <circle r="1.5" className="fill-pink-400 shadow-[0_0_15px_#ec4899]" />
+                  {hub.active && <circle r="8" className="fill-pink-500/10 stroke-pink-500/30 stroke-[0.2] animate-ping" style={{ animationDuration: '3s' }} />}
+                  <circle r="5" className={hub.active ? "fill-pink-500/20 stroke-pink-500/50 stroke-[0.5]" : "fill-slate-500/20 stroke-slate-500/50 stroke-[0.5]"} />
+                  <circle r="1.5" className={hub.active ? "fill-pink-400 shadow-[0_0_15px_#ec4899]" : "fill-slate-500 shadow-[0_0_15px_#64748b]"} />
                   
-                  {/* Info Tags */}
-                  <rect x="-8" y="-12" width="16" height="5" rx="1" fill="#1e1e2d" className="opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <text y="-8" className="text-[2.5px] fill-pink-200 font-mono opacity-0 group-hover:opacity-100 transition-opacity" textAnchor="middle">${hub.price.toFixed(2)}</text>
-                  
-                  <rect x="-8" y="7" width="16" height="5" rx="1" fill="#1e1e2d" />
-                  <text y="10.5" className="text-[2.5px] fill-slate-300 font-mono" textAnchor="middle">Q:{hub.queue}</text>
+                  {/* Info Tags (Visible on Hover) */}
+                  <g className="opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <rect x="-5" y="-8" width="10" height="3.5" rx="1" fill="#1e1e2d" className="drop-shadow-lg" />
+                    <text y="-5.5" className={`text-[1.8px] ${hub.active ? 'fill-pink-200' : 'fill-slate-300'} font-mono font-bold tracking-wider`} textAnchor="middle">
+                      {hub.active ? `$${hub.price.toFixed(2)}` : 'OFFLINE'}
+                    </text>
+                    
+                    <rect x="-5" y="4.5" width="10" height="3.5" rx="1" fill="#1e1e2d" className="drop-shadow-lg" />
+                    <text y="7" className="text-[1.8px] fill-slate-300 font-mono font-medium" textAnchor="middle">Q:{hub.queue}</text>
+                  </g>
                 </g>
               ))}
 
-              {/* Render Trails */}
+              {/* Render Trails (Comet Fading Effect) */}
               {showTrails && Object.entries(trails).map(([id, path]) => {
                 if (path.length < 2) return null;
-                const d = path.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`).join(" ");
                 const res = simState.residents.find(r => r.id === id);
                 const isCritical = res ? res.battery < 30 : false;
                 const baseColor = res?.charging ? '#4ade80' : (isCritical ? '#ef4444' : '#60a5fa');
                 
                 return (
-                  <path 
-                    key={`trail-${id}`} 
-                    d={d} 
-                    fill="none" 
-                    stroke={baseColor} 
-                    strokeWidth="0.3" 
-                    opacity="0.3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="drop-shadow-[0_0_2px_rgba(96,165,250,0.5)] transition-all duration-300"
-                  />
+                  <g key={`trail-${id}`} className="transition-opacity duration-300">
+                    {path.slice(1).map((pt, i) => {
+                      const opacity = Math.max(0, (i / (path.length - 1)) * 0.8);
+                      const thickness = 0.1 + (i / (path.length - 1)) * 0.4;
+                      return (
+                        <line
+                          key={i}
+                          x1={path[i].x}
+                          y1={path[i].y}
+                          x2={pt.x}
+                          y2={pt.y}
+                          stroke={baseColor}
+                          strokeWidth={thickness}
+                          opacity={opacity}
+                          strokeLinecap="round"
+                          className="drop-shadow-[0_0_3px_currentColor]"
+                        />
+                      );
+                    })}
+                  </g>
                 );
               })}
 
@@ -273,7 +285,7 @@ export default function SimulationPage() {
               
               <div className="flex items-center justify-between">
                 <p className="text-sm text-slate-400">Active Hubs</p>
-                <p className="text-3xl font-light text-pink-400 tracking-tighter">{simState.hubs.length}</p>
+                <p className="text-3xl font-light text-pink-400 tracking-tighter">{simState.hubs.filter(h => h.active).length}</p>
               </div>
               <div className="h-[1px] w-full bg-gradient-to-r from-white/5 to-transparent" />
 
@@ -301,13 +313,17 @@ export default function SimulationPage() {
              
              <div className="space-y-3 overflow-y-auto pr-2 custom-scrollbar flex-1">
                {simState.hubs.map(hub => (
-                 <div key={hub.id} className="flex justify-between items-center p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors group">
+                 <div key={hub.id} className={`flex justify-between items-center p-4 rounded-2xl border transition-colors group ${hub.active ? 'bg-white/[0.02] border-white/5 hover:bg-white/[0.04]' : 'bg-red-950/20 border-red-900/30'}`}>
                    <div>
-                     <p className="text-sm font-medium text-slate-200">{hub.id.toUpperCase()}</p>
+                     <p className={`text-sm font-medium ${hub.active ? 'text-slate-200' : 'text-red-400/80'}`}>{hub.id.toUpperCase()}{!hub.active && ' (OFFLINE)'}</p>
                      <p className="text-xs text-slate-500 mt-0.5">Queue: <span className="text-slate-300 font-mono">{hub.queue} cars</span></p>
                    </div>
-                   <div className="text-right">
-                     <p className="text-lg text-pink-300 font-mono group-hover:scale-105 transition-transform">${hub.price.toFixed(2)}<span className="text-xs text-pink-500/50">/kWh</span></p>
+                   <div className="text-right flex items-center justify-end">
+                     {hub.active ? (
+                        <p className="text-lg text-pink-300 font-mono group-hover:scale-105 transition-transform">${hub.price.toFixed(2)}<span className="text-xs text-pink-500/50">/kWh</span></p>
+                     ) : (
+                        <p className="text-xs text-red-500/50 font-mono font-bold uppercase tracking-wider">Maintenance</p>
+                     )}
                    </div>
                  </div>
                ))}
