@@ -382,12 +382,12 @@ bash scripts/destroy.sh prod twin
 
 ### Backend environment variables (`.env`)
 
-> **Note:** The current backend uses **OpenAI** for chat and tool calling (not AWS Bedrock). The Bedrock model variables in `terraform/terraform.tfvars` are retained for infrastructure compatibility but are not used by the FastAPI application directly.
+> **Note:** The current backend uses **OpenAI** for chat and tool calling (not AWS Bedrock). Bedrock model variables in `terraform/terraform.tfvars` are retained for infrastructure compatibility, while the FastAPI application uses AWS configuration for other AWS clients such as S3 via `boto3`.
 
 | Variable | Default | Description |
 |---|---|---|
 | `AWS_ACCOUNT_ID` | — | Your 12-digit AWS account ID |
-| `DEFAULT_AWS_REGION` | `us-east-1` | AWS region for Bedrock and other clients |
+| `DEFAULT_AWS_REGION` | `us-east-1` | AWS region for backend AWS clients such as S3 (via `boto3`) |
 | `OPENAI_API_KEY` | — | OpenAI API key used by the Oracle AI |
 | `LLM_MODEL_ID` | `gpt-4o-mini` | OpenAI model ID for chat and tool calling |
 | `ALLOW_CODE_EXECUTION` | `false` | Enable the Oracle's `execute_python` tool. **Only set to `true` in trusted, local environments** — arbitrary Python code runs with server-level access. Never enable in production. |
