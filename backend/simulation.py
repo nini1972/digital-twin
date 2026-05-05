@@ -111,10 +111,18 @@ class ResidentAgent(Agent):
 
         # --- WAITING state: resident is at hub but waiting for a free slot ---
         if self.state == ResidentState.WAITING:
-            if self.current_hub and self.id in self.current_hub.charging_slots:
+            hub = self.current_hub
+
+            if hub is None or getattr(hub, "active", True) is False:
+                # Hub is unavailable while we are waiting; leave its queue and re-seek.
+                self._leave_hub()
+                self.state = ResidentState.SEEKING
+            elif self.id in hub.charging_slots:
                 # Hub promoted us into a slot
                 self.state = ResidentState.CHARGING
-            return
+                return
+            else:
+                return
 
         # --- DRIVING / SEEKING: drain battery and move ---
         self.battery = max(0, self.battery - engine.global_battery_drain)
