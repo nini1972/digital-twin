@@ -110,6 +110,7 @@ def save_market_event(event_type: str, description: str):
 
 def load_telemetry(limit: int = 50) -> dict:
     """Return the last `limit` telemetry rows and recent market events."""
+    limit = max(1, min(limit, 200))  # clamp to safe range as defense-in-depth
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute('''

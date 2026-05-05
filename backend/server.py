@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -501,10 +501,10 @@ async def get_conversation(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/telemetry")
-async def get_telemetry(limit: int = 50):
+async def get_telemetry(limit: int = Query(default=50, ge=1, le=200)):
     """Return historical telemetry and market events for sparkline charts."""
     try:
-        return load_telemetry(limit=min(limit, 200))
+        return load_telemetry(limit=limit)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
