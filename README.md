@@ -27,6 +27,7 @@ static site)        │                     │
 - **Fully serverless** — Lambda + API Gateway, scales to zero when idle
 - **One-command deploy** — a single script builds the Lambda package, runs Terraform, and syncs the frontend to S3
 - **Optional custom domain** — supports Route 53 + ACM certificate setup for a custom domain
+- **Agentic EV Micro-Twin** — a live multi-agent city simulation (resident EVs + charging hubs) runs in the background; the Oracle AI can observe and manipulate it in real time via tool calling
 
 ---
 
@@ -60,6 +61,8 @@ digital-twin/
 │   ├── lambda_handler.py       # Mangum adapter for AWS Lambda
 │   ├── context.py              # Builds the AI system prompt from your data
 │   ├── resources.py            # Loads the data files at startup
+│   ├── simulation.py           # Multi-agent EV city simulation (agents + engine)
+│   ├── database.py             # SQLite helpers (conversations, telemetry, market events)
 │   ├── deploy.py               # Packages the Lambda deployment zip
 │   ├── pyproject.toml          # Python dependencies (managed by uv)
 │   └── requirements.txt        # Pinned requirements for Lambda packaging
@@ -67,6 +70,7 @@ digital-twin/
 │   ├── app/
 │   │   ├── twin/               # /twin route — cinematic landing / welcome page
 │   │   ├── chat/               # /chat route — the main chat interface
+│   │   ├── simulation/         # /simulation route — live EV city simulation dashboard
 │   │   └── page.tsx            # Root redirect → /twin
 │   ├── components/
 │   │   └── twin.tsx            # Chat UI component (mounted at /chat)
@@ -179,7 +183,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing page experience, or go directly to [http://localhost:3000/chat](http://localhost:3000/chat) for the chat interface. The chat calls `http://127.0.0.1:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
+Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing page experience, [http://localhost:3000/chat](http://localhost:3000/chat) for the chat interface, or [http://localhost:3000/simulation](http://localhost:3000/simulation) for the live simulation dashboard. The chat calls `http://127.0.0.1:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
 
 ### Backend API endpoints
 
@@ -189,6 +193,8 @@ Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing pa
 | `GET` | `/health` | Health check |
 | `POST` | `/chat` | Send a message, receive a reply |
 | `GET` | `/conversation/{session_id}` | Retrieve conversation history |
+| `GET` | `/api/telemetry` | Historical simulation telemetry and market events |
+| `WebSocket` | `/ws/simulation` | Real-time simulation state stream |
 
 ---
 
@@ -380,7 +386,9 @@ bash scripts/destroy.sh prod twin
 |---|---|---|
 | `AWS_ACCOUNT_ID` | — | Your 12-digit AWS account ID |
 | `DEFAULT_AWS_REGION` | `us-east-1` | AWS region for Bedrock and other clients |
-| `BEDROCK_MODEL_ID` | `amazon.nova-lite-v1:0` | Bedrock model ID |
+| `OPENAI_API_KEY` | — | OpenAI API key used by the Oracle AI |
+| `LLM_MODEL_ID` | `gpt-4o-mini` | OpenAI model ID for chat and tool calling |
+| `ALLOW_CODE_EXECUTION` | `false` | Enable the Oracle's `execute_python` tool (trusted/local environments only) |
 | `USE_S3` | `false` | Use S3 for conversation storage instead of local files |
 | `S3_BUCKET` | — | S3 bucket name (required when `USE_S3=true`) |
 | `MEMORY_DIR` | `../memory` | Local directory for conversation files (when `USE_S3=false`) |
@@ -393,6 +401,94 @@ bash scripts/destroy.sh prod twin
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend API base URL |
 
 Set this in `frontend/.env.local` for local development. The deploy script creates `frontend/.env.production` automatically during deployment.
+
+---
+
+## Simulation — Agentic EV Micro-Twin
+
+A live, multi-agent city simulation runs in the background whenever the backend is running. Resident electric vehicles (EVs) navigate a 100 × 100 virtual city grid, autonomously seeking and queuing at charging hubs. The Oracle AI (your digital twin's alter ego) can observe the simulation in real time and manipulate it through tool calling.
+
+### How it works
+
+The simulation runs as a background `asyncio` task started by the FastAPI lifespan. Every **0.5 seconds** (one tick) the engine:
+
+1. Frees completed charging slots and promotes waiting residents into free slots.
+2. Steps every resident agent (move, drain battery, seek hubs).
+3. Updates hub pricing based on demand.
+4. Logs telemetry to SQLite every 10 ticks and fires automated market events every 20 ticks.
+5. Broadcasts the full city state to all connected WebSocket clients.
+
+### Agent types
+
+#### `ResidentAgent` — autonomous EV car
+
+Each resident has a position, battery level, speed, and a `ResidentState`:
+
+| State | Description |
+|---|---|
+| `DRIVING` | Moving toward a random destination; battery draining each tick |
+| `SEEKING` | Battery below threshold — heading for the best-scored hub |
+| `WAITING` | Arrived at hub, queued for a free charging slot |
+| `CHARGING` | In a slot; battery refilling each tick until full (→ back to DRIVING) |
+
+When the battery drops below **30 %** (or **40 %** during a storm/extreme heat), the resident scores all active hubs by `distance² × distance_weight + price × price_weight` and steers toward the best option.
+
+#### `ChargingHubAgent` — EV charging station
+
+Each hub has a fixed capacity of **4 simultaneous charging slots** and a dynamic electricity price (default **$0.20 / kWh**):
+
+- If total demand (charging + waiting) exceeds 2, the price ticks **+$0.01** per tick.
+- If demand reaches 0 and price is above $0.15, the price ticks **−$0.01** per tick.
+- Automated market events can trigger larger price surges or drops every 20 ticks.
+
+### Oracle AI tools
+
+The Oracle (your digital twin) has god-like powers over the simulation, exposed as OpenAI tool-call functions:
+
+| Tool | What it does |
+|---|---|
+| `add_resident_agents` | Spawn N new EV agents in random positions |
+| `add_charging_hubs` | Add N new charging hubs at random positions |
+| `trigger_surge_event` | Drain the battery of a random % of residents to a critical level (<20 %) |
+| `set_global_parameters` | Tune `charging_speed`, `battery_drain`, `distance_weight`, and `price_weight` |
+| `set_weather` | Switch weather (`sunny` / `storm` / `extreme_heat`) — affects drain rate and charging speed |
+| `trigger_maintenance` | Randomly disable one active hub to simulate hardware failure |
+| `set_hub_price` | Manually override the electricity price of a specific hub |
+| `execute_python` | Run an arbitrary Python snippet with `engine` in scope (requires `ALLOW_CODE_EXECUTION=true`) |
+
+**Weather effects**
+
+| Condition | Battery drain / tick | Charging speed / tick | Seek threshold |
+|---|---|---|---|
+| `sunny` (default) | 0.2 % | 5.0 % | 30 % |
+| `storm` | 0.5 % | 2.0 % | 40 % |
+| `extreme_heat` | 0.8 % | 4.0 % | 40 % |
+
+### Simulation API endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `WebSocket` | `/ws/simulation` | Real-time state stream; also accepts `add_hub` / `add_resident` text commands |
+| `GET` | `/api/telemetry?limit=50` | Historical telemetry rows and recent market events (SQLite) |
+
+### Data persistence
+
+All simulation data is stored in a local SQLite database at `backend/data/simulation.db`:
+
+| Table | Columns | Populated by |
+|---|---|---|
+| `conversations` | `session_id`, `role`, `content`, `timestamp` | `/chat` endpoint |
+| `telemetry` | `timestamp`, `weather`, `active_hubs`, `avg_price`, `total_queue` | Every 10 ticks |
+| `market_events` | `timestamp`, `event_type`, `description` | Every 20 ticks (`high_demand_surge` / `low_demand_drop`) |
+
+### Simulation dashboard
+
+Navigate to [http://localhost:3000/simulation](http://localhost:3000/simulation) while the backend is running to see:
+
+- **Live city canvas** — animated dots for EVs (colour-coded by state) and hub icons with real-time queue and slot occupancy.
+- **Movement trails** — toggleable path history showing where each agent has been.
+- **Oracle chat panel** — talk to the AI; it reads live telemetry and can fire any of the tools above in response to natural-language commands (e.g. *"trigger a storm"*, *"add 5 more residents"*).
+- **Sparkline charts** — rolling history of average hub price and total queue depth fetched from `/api/telemetry`.
 
 ---
 
