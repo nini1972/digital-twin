@@ -451,7 +451,7 @@ The Oracle (your digital twin) has god-like powers over the simulation, exposed 
 |---|---|
 | `add_resident_agents` | Spawn N new EV agents in random positions |
 | `add_charging_hubs` | Add N new charging hubs at random positions |
-| `trigger_surge_event` | Drain the battery of a random % of residents to a critical level (<20 %) |
+| `trigger_surge_event` | Drain the battery of a random % of residents to a critical level (≤20 %) |
 | `set_global_parameters` | Tune `charging_speed`, `battery_drain`, `distance_weight`, and `price_weight` |
 | `set_weather` | Switch weather (`sunny` / `storm` / `extreme_heat`) — affects drain rate and charging speed |
 | `trigger_maintenance` | Randomly disable one active hub to simulate hardware failure |
