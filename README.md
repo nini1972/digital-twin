@@ -475,13 +475,13 @@ The Oracle (your digital twin) has god-like powers over the simulation, exposed 
 
 ### Data persistence
 
-All simulation data is stored in a local SQLite database at `backend/data/simulation.db`:
+Simulation telemetry/event data is stored in a local SQLite database at `backend/data/simulation.db`. Conversation history is environment-dependent: when `USE_S3=true`, it is stored in S3 as per-session JSON; otherwise it is stored locally in the development conversation-memory directory.
 
-| Table | Columns | Populated by |
+| Store / Table | Columns | Populated by |
 |---|---|---|
-| `conversations` | `session_id`, `role`, `content`, `timestamp` | `/chat` endpoint |
-| `telemetry` | `timestamp`, `weather`, `active_hubs`, `avg_price`, `total_queue` | Every 10 ticks |
-| `market_events` | `timestamp`, `event_type`, `description` | Every 20 ticks (`high_demand_surge` / `low_demand_drop`) |
+| `conversations` (S3 or local JSON; if SQLite-backed, includes internal PK `id`) | `id` (internal PK), `session_id`, `role`, `content`, `timestamp` | `/chat` endpoint |
+| `telemetry` (SQLite) | `id` (internal PK), `timestamp`, `weather`, `active_hubs`, `avg_price`, `total_queue` | Every 10 ticks |
+| `market_events` (SQLite) | `id` (internal PK), `timestamp`, `event_type`, `description` | Every 20 ticks (`high_demand_surge` / `low_demand_drop`) |
 
 ### Simulation dashboard
 
