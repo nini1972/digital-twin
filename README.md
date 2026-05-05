@@ -382,13 +382,15 @@ bash scripts/destroy.sh prod twin
 
 ### Backend environment variables (`.env`)
 
+> **Note:** The current backend uses **OpenAI** for chat and tool calling (not AWS Bedrock). The Bedrock model variables in `terraform/terraform.tfvars` are retained for infrastructure compatibility but are not used by the FastAPI application directly.
+
 | Variable | Default | Description |
 |---|---|---|
 | `AWS_ACCOUNT_ID` | — | Your 12-digit AWS account ID |
 | `DEFAULT_AWS_REGION` | `us-east-1` | AWS region for Bedrock and other clients |
 | `OPENAI_API_KEY` | — | OpenAI API key used by the Oracle AI |
 | `LLM_MODEL_ID` | `gpt-4o-mini` | OpenAI model ID for chat and tool calling |
-| `ALLOW_CODE_EXECUTION` | `false` | Enable the Oracle's `execute_python` tool (trusted/local environments only) |
+| `ALLOW_CODE_EXECUTION` | `false` | Enable the Oracle's `execute_python` tool. **Only set to `true` in trusted, local environments** — arbitrary Python code runs with server-level access. Never enable in production. |
 | `USE_S3` | `false` | Use S3 for conversation storage instead of local files |
 | `S3_BUCKET` | — | S3 bucket name (required when `USE_S3=true`) |
 | `MEMORY_DIR` | `../memory` | Local directory for conversation files (when `USE_S3=false`) |
@@ -454,7 +456,7 @@ The Oracle (your digital twin) has god-like powers over the simulation, exposed 
 | `set_weather` | Switch weather (`sunny` / `storm` / `extreme_heat`) — affects drain rate and charging speed |
 | `trigger_maintenance` | Randomly disable one active hub to simulate hardware failure |
 | `set_hub_price` | Manually override the electricity price of a specific hub |
-| `execute_python` | Run an arbitrary Python snippet with `engine` in scope (requires `ALLOW_CODE_EXECUTION=true`) |
+| `execute_python` | Run an arbitrary Python snippet with `engine` in scope (requires `ALLOW_CODE_EXECUTION=true`) ⚠️ **Never enable in production** |
 
 **Weather effects**
 
@@ -485,7 +487,7 @@ All simulation data is stored in a local SQLite database at `backend/data/simula
 
 Navigate to [http://localhost:3000/simulation](http://localhost:3000/simulation) while the backend is running to see:
 
-- **Live city canvas** — animated dots for EVs (colour-coded by state) and hub icons with real-time queue and slot occupancy.
+- **Live city canvas** — animated dots for EVs (color-coded by state) and hub icons with real-time queue and slot occupancy.
 - **Movement trails** — toggleable path history showing where each agent has been.
 - **Oracle chat panel** — talk to the AI; it reads live telemetry and can fire any of the tools above in response to natural-language commands (e.g. *"trigger a storm"*, *"add 5 more residents"*).
 - **Sparkline charts** — rolling history of average hub price and total queue depth fetched from `/api/telemetry`.
