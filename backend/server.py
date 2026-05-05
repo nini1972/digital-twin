@@ -116,9 +116,10 @@ def call_bedrock(conversation: List[Dict], user_message: str) -> str:
     messages = []
     
     # Add system prompt as first user message (Bedrock convention)
+    sim_state = engine.get_state() if 'engine' in globals() else None
     messages.append({
         "role": "user", 
-        "content": [{"text": f"System: {prompt()}"}]
+        "content": [{"text": f"System: {prompt(sim_state)}"}]
     })
     
     # Add conversation history (limit to last 10 exchanges to manage context)
@@ -136,6 +137,47 @@ def call_bedrock(conversation: List[Dict], user_message: str) -> str:
     
     try:
         # Call Bedrock using the converse API
+        toolConfig = {
+            "tools": [
+                {
+                    "toolSpec": {
+                        "name": "add_resident_agents",
+                        "description": "Add a specified number of resident EV agents to the city simulation.",
+                        "inputSchema": {
+                            "json": {
+                                "type": "object",
+                                "properties": {
+                                    "count": {
+                                        "type": "integer",
+                                        "description": "The number of resident agents to add. Default is 1."
+                                    }
+                                },
+                                "required": ["count"]
+                            }
+                        }
+                    }
+                },
+                {
+                    "toolSpec": {
+                        "name": "add_charging_hubs",
+                        "description": "Add a specified number of charging hubs to the city simulation.",
+                        "inputSchema": {
+                            "json": {
+                                "type": "object",
+                                "properties": {
+                                    "count": {
+                                        "type": "integer",
+                                        "description": "The number of charging hubs to add. Default is 1."
+                                    }
+                                },
+                                "required": ["count"]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+
         response = bedrock_client.converse(
             modelId=BEDROCK_MODEL_ID,
             messages=messages,
@@ -143,11 +185,74 @@ def call_bedrock(conversation: List[Dict], user_message: str) -> str:
                 "maxTokens": 2000,
                 "temperature": 0.7,
                 "topP": 0.9
-            }
+            },
+            toolConfig=toolConfig
         )
         
-        # Extract the response text
-        return response["output"]["message"]["content"][0]["text"]
+        output_message = response["output"]["message"]
+        messages.append(output_message)
+
+        # Check if model wants to use tools
+        tool_uses = [c["toolUse"] for c in output_message.get("content", []) if "toolUse" in c]
+        
+        if tool_uses:
+            tool_results = []
+            for tool_use in tool_uses:
+                name = tool_use["name"]
+                tool_input = tool_use["input"]
+                tool_use_id = tool_use["toolUseId"]
+                
+                # Execute tool
+                if name == "add_resident_agents":
+                    count = tool_input.get("count", 1)
+                    from simulation import ResidentAgent
+                    for _ in range(count):
+                        new_res = ResidentAgent(f"res_{len(engine.residents)}")
+                        engine.residents.append(new_res)
+                    result_body = {"status": "success", "message": f"Added {count} residents."}
+                    print(f"Oracle executed tool: Added {count} residents.")
+                elif name == "add_charging_hubs":
+                    count = tool_input.get("count", 1)
+                    from simulation import ChargingHubAgent
+                    for _ in range(count):
+                        new_hub = ChargingHubAgent(f"hub_{len(engine.hubs)}")
+                        engine.hubs.append(new_hub)
+                    result_body = {"status": "success", "message": f"Added {count} hubs."}
+                    print(f"Oracle executed tool: Added {count} hubs.")
+                else:
+                    result_body = {"status": "error", "message": "Unknown tool."}
+                
+                tool_results.append({
+                    "toolResult": {
+                        "toolUseId": tool_use_id,
+                        "content": [{"json": result_body}]
+                    }
+                })
+            
+            # Send tool results back to Bedrock
+            messages.append({
+                "role": "user",
+                "content": tool_results
+            })
+            
+            final_response = bedrock_client.converse(
+                modelId=BEDROCK_MODEL_ID,
+                messages=messages,
+                inferenceConfig={
+                    "maxTokens": 2000,
+                    "temperature": 0.7,
+                    "topP": 0.9
+                },
+                toolConfig=toolConfig
+            )
+            
+            final_message = final_response["output"]["message"]
+            texts = [c["text"] for c in final_message.get("content", []) if "text" in c]
+            return " ".join(texts)
+
+        # Extract the response text if no tools were used
+        texts = [c["text"] for c in output_message.get("content", []) if "text" in c]
+        return " ".join(texts)
         
     except ClientError as e:
         error_code = e.response['Error']['Code']

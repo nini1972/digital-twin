@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { Send, Bot, User, Loader2 } from "lucide-react";
 
 type Resident = { id: string; x: number; y: number; battery: number; charging: boolean };
 type Hub = { id: string; x: number; y: number; price: number; queue: number };
@@ -8,7 +9,19 @@ type SimState = { residents: Resident[]; hubs: Hub[] };
 
 export default function SimulationPage() {
   const [simState, setSimState] = useState<SimState>({ residents: [], hubs: [] });
+  const [trails, setTrails] = useState<Record<string, {x: number, y: number}[]>>({});
+  const [showTrails, setShowTrails] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const [chatMessages, setChatMessages] = useState<{role: string, content: string}[]>([{ role: 'assistant', content: 'Greetings. I am the Oracle of this digital twin. I observe the city and can interact with it.' }]);
+  const [chatInput, setChatInput] = useState("");
+  const [isChatting, setIsChatting] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
 
   useEffect(() => {
     // Connect to our FastAPI WebSocket
@@ -17,6 +30,18 @@ export default function SimulationPage() {
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       setSimState(data);
+
+      setTrails((prev) => {
+        const newTrails = { ...prev };
+        data.residents.forEach((res: Resident) => {
+          if (!newTrails[res.id]) newTrails[res.id] = [];
+          newTrails[res.id].push({ x: res.x, y: res.y });
+          if (newTrails[res.id].length > 25) {
+            newTrails[res.id].shift();
+          }
+        });
+        return newTrails;
+      });
     };
 
     wsRef.current = ws;
@@ -34,6 +59,32 @@ export default function SimulationPage() {
     wsRef.current?.send("add_resident");
   };
 
+  const sendMessage = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!chatInput.trim() || isChatting) return;
+
+    const userMessage = chatInput.trim();
+    setChatInput("");
+    setChatMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setIsChatting(true);
+
+    try {
+      const response = await fetch("http://localhost:8000/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage, session_id: sessionId }),
+      });
+      const data = await response.json();
+      setSessionId(data.session_id);
+      setChatMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
+    } catch (err) {
+      console.error(err);
+      setChatMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Connection to Oracle lost." }]);
+    } finally {
+      setIsChatting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#050508] text-white overflow-hidden flex flex-col font-sans selection:bg-pink-500/30">
       
@@ -49,6 +100,16 @@ export default function SimulationPage() {
           </div>
         </div>
         <div className="flex gap-4">
+          <button 
+            onClick={() => setShowTrails(!showTrails)} 
+            className={`px-6 py-2.5 rounded-full border text-sm font-medium transition-all ${
+              showTrails 
+                ? "border-purple-500/30 bg-purple-500/10 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:bg-purple-500/20 hover:shadow-[0_0_25px_rgba(168,85,247,0.3)] hover:-translate-y-0.5" 
+                : "border-slate-500/30 bg-slate-500/10 text-slate-400 hover:bg-slate-500/20"
+            }`}
+          >
+            {showTrails ? "Hide Memory Trails" : "Show Memory Trails"}
+          </button>
           <button 
             onClick={addResident} 
             className="px-6 py-2.5 rounded-full border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 text-sm font-medium transition-all shadow-[0_0_15px_rgba(59,130,246,0.15)] hover:shadow-[0_0_25px_rgba(59,130,246,0.3)] hover:-translate-y-0.5"
@@ -97,6 +158,29 @@ export default function SimulationPage() {
                 </g>
               ))}
 
+              {/* Render Trails */}
+              {showTrails && Object.entries(trails).map(([id, path]) => {
+                if (path.length < 2) return null;
+                const d = path.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`).join(" ");
+                const res = simState.residents.find(r => r.id === id);
+                const isCritical = res ? res.battery < 30 : false;
+                const baseColor = res?.charging ? '#4ade80' : (isCritical ? '#ef4444' : '#60a5fa');
+                
+                return (
+                  <path 
+                    key={`trail-${id}`} 
+                    d={d} 
+                    fill="none" 
+                    stroke={baseColor} 
+                    strokeWidth="0.3" 
+                    opacity="0.3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="drop-shadow-[0_0_2px_rgba(96,165,250,0.5)] transition-all duration-300"
+                  />
+                );
+              })}
+
               {/* Render Resident Agents */}
               {simState.residents.map((res) => {
                 // Determine color based on state
@@ -128,6 +212,49 @@ export default function SimulationPage() {
                 );
               })}
            </svg>
+
+           {/* Oracle Chat UI */}
+           <div className="absolute bottom-6 left-6 w-[360px] h-[450px] flex flex-col rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl shadow-[0_0_30px_rgba(0,0,0,0.5)] overflow-hidden">
+             {/* Chat Header */}
+             <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 bg-gradient-to-r from-purple-900/40 to-blue-900/40">
+               <Bot className="w-5 h-5 text-purple-400" />
+               <h3 className="text-sm font-semibold tracking-wide text-purple-100">AI Oracle</h3>
+               {isChatting && <Loader2 className="w-4 h-4 text-purple-400 animate-spin ml-auto" />}
+             </div>
+             
+             {/* Chat Messages */}
+             <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar flex flex-col">
+               {chatMessages.map((msg, i) => (
+                 <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                   <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-lg ${msg.role === 'user' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'}`}>
+                     {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                   </div>
+                   <div className={`px-4 py-2.5 rounded-2xl max-w-[80%] text-sm shadow-md ${msg.role === 'user' ? 'bg-blue-600/20 text-blue-50 border border-blue-500/20 rounded-tr-none' : 'bg-white/5 text-slate-200 border border-white/5 rounded-tl-none'}`}>
+                     {msg.content}
+                   </div>
+                 </div>
+               ))}
+               <div ref={chatEndRef} />
+             </div>
+
+             {/* Chat Input */}
+             <form onSubmit={sendMessage} className="p-3 border-t border-white/10 bg-black/40 flex gap-2">
+               <input
+                 type="text"
+                 value={chatInput}
+                 onChange={e => setChatInput(e.target.value)}
+                 placeholder="Command the Oracle..."
+                 className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-purple-500/50 transition-colors shadow-inner"
+               />
+               <button 
+                 type="submit" 
+                 disabled={isChatting || !chatInput.trim()}
+                 className="w-10 h-10 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 flex items-center justify-center text-purple-300 disabled:opacity-50 transition-colors shadow-lg border border-purple-500/30"
+               >
+                 <Send className="w-4 h-4 ml-0.5" />
+               </button>
+             </form>
+           </div>
         </div>
 
         {/* Right Sidebar: Real-time Analytics Dashboard */}
