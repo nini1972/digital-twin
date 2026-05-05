@@ -387,6 +387,7 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                             "status": "disabled",
                             "message": "Python code execution is disabled on this server. Set ALLOW_CODE_EXECUTION=true to enable it."
                         }
+                        print("Oracle execute_python skipped: ALLOW_CODE_EXECUTION is disabled.")
                     else:
                         code = function_args.get("code", "")
                         import io
@@ -409,7 +410,7 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                             result_body = {"status": "error", "message": str(e)}
                         finally:
                             sys.stdout = old_stdout
-                    print(f"Oracle executed python code.")
+                        print("Oracle executed python code.")
                 else:
                     result_body = {"status": "error", "message": "Unknown tool."}
                 
