@@ -13,7 +13,7 @@ const WS_BASE = API_BASE.replace(/^https?:\/\//, (m) => (m.startsWith("https") ?
 
 /** Render a minimal SVG sparkline from an array of numbers. */
 function Sparkline({ values, color, height = 32 }: { values: number[]; color: string; height?: number }) {
-  if (values.length < 2) return <div style={{ height }} />;
+  if (values.length < 2) return <div style={{ height }} aria-label="Insufficient data for chart" />;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
@@ -244,11 +244,17 @@ export default function SimulationPage() {
 
               {/* Render Resident Agents */}
               {simState.residents.map((res) => {
-                // Determine color based on state
+                // Determine color and glow based on agent state
                 const isCritical = res.battery < 30;
                 const isWaiting = res.state === "waiting";
-                const baseColor = res.charging ? '#4ade80' : isWaiting ? '#facc15' : (isCritical ? '#ef4444' : '#60a5fa');
-                const glowClass = res.charging ? 'drop-shadow-[0_0_4px_rgba(74,222,128,0.8)]' : isWaiting ? 'drop-shadow-[0_0_4px_rgba(250,204,21,0.8)]' : '';
+                let baseColor = '#60a5fa'; // driving
+                if (res.charging) baseColor = '#4ade80';
+                else if (isWaiting) baseColor = '#facc15';
+                else if (isCritical) baseColor = '#ef4444';
+
+                let glowClass = '';
+                if (res.charging) glowClass = 'drop-shadow-[0_0_4px_rgba(74,222,128,0.8)]';
+                else if (isWaiting) glowClass = 'drop-shadow-[0_0_4px_rgba(250,204,21,0.8)]';
 
                 return (
                   <g key={res.id} className={`transition-all duration-[500ms] ease-linear ${glowClass}`} transform={`translate(${res.x}, ${res.y})`}>

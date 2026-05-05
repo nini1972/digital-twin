@@ -34,7 +34,12 @@ class ChargingHubAgent(Agent):
         return len(self.waiting_queue) + len(self.charging_slots)
 
     def free_completed_slots(self, residents_by_id: dict):
-        """Remove residents that finished charging from charging_slots."""
+        """Remove residents that finished charging from charging_slots.
+
+        Note: residents that have been removed from the simulation entirely
+        (i.e. not present in residents_by_id) are also evicted here, so
+        their IDs do not remain as orphaned entries in charging_slots.
+        """
         finished = [rid for rid in list(self.charging_slots)
                     if rid not in residents_by_id or residents_by_id[rid].state != ResidentState.CHARGING]
         for rid in finished:
@@ -147,7 +152,9 @@ class ResidentAgent(Agent):
                 self.destination_x = target.x
                 self.destination_y = target.y
 
-                # Arrival radius scales with weather multiplier
+                # Arrival radius scales with weather: base radius = sqrt(4) ≈ 2 grid units.
+                # In storm/extreme_heat the multiplier is 2.0, so the squared threshold
+                # becomes 4 * 2² = 16, meaning sqrt(16) = 4 grid units — 2× the base distance.
                 arrival_radius = 4 * (radius_multiplier ** 2)
                 if (target.x - self.x)**2 + (target.y - self.y)**2 < arrival_radius:
                     # Arrived — join the hub queue
