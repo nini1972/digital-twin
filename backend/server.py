@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
@@ -10,7 +11,7 @@ from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError
 from context import prompt
-
+from simulation import engine
 # Load environment variables from the root .env file
 dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path)
@@ -226,6 +227,38 @@ async def get_conversation(session_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.on_event("startup")
+async def startup_event():
+    # Start the background simulation loop
+    asyncio.create_task(engine.run())
+
+@app.websocket("/ws/simulation")
+async def simulation_websocket(websocket: WebSocket):
+    await websocket.accept()
+    
+    async def send_state(state):
+        try:
+            await websocket.send_json(state)
+        except Exception:
+            pass
+
+    engine.subscribers.append(send_state)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Handle real-time commands from the frontend
+            if data == "add_hub":
+                from simulation import ChargingHubAgent
+                new_hub = ChargingHubAgent(f"hub_{len(engine.hubs)}")
+                engine.hubs.append(new_hub)
+                print(f"Added new hub: {new_hub.id}")
+            elif data == "add_resident":
+                from simulation import ResidentAgent
+                new_res = ResidentAgent(f"res_{len(engine.residents)}")
+                engine.residents.append(new_res)
+    except WebSocketDisconnect:
+        if send_state in engine.subscribers:
+            engine.subscribers.remove(send_state)
 
 if __name__ == "__main__":
     import uvicorn
