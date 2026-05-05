@@ -3,9 +3,35 @@
 import { useEffect, useState, useRef } from "react";
 import { Send, Bot, User, Loader2 } from "lucide-react";
 
-type Resident = { id: string; x: number; y: number; battery: number; charging: boolean };
-type Hub = { id: string; x: number; y: number; price: number; queue: number; active: boolean };
-type SimState = { residents: Resident[]; hubs: Hub[] };
+type Resident = { id: string; x: number; y: number; battery: number; charging: boolean; state: string };
+type Hub = { id: string; x: number; y: number; price: number; queue: number; slots_used: number; active: boolean };
+type SimState = { residents: Resident[]; hubs: Hub[]; weather?: string };
+type TelemetryPoint = { timestamp: string; avg_price: number; total_queue: number };
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const WS_BASE = API_BASE.replace(/^https?:\/\//, (m) => (m.startsWith("https") ? "wss://" : "ws://"));
+
+/** Render a minimal SVG sparkline from an array of numbers. */
+function Sparkline({ values, color, height = 32 }: { values: number[]; color: string; height?: number }) {
+  if (values.length < 2) return <div style={{ height }} aria-label="Insufficient data for chart" />;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const w = 260;
+  const h = height;
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x},${y}`;
+    })
+    .join(" ");
+  return (
+    <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 export default function SimulationPage() {
   const [simState, setSimState] = useState<SimState>({ residents: [], hubs: [] });
@@ -19,13 +45,15 @@ export default function SimulationPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  const [telemetry, setTelemetry] = useState<TelemetryPoint[]>([]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
   useEffect(() => {
     // Connect to our FastAPI WebSocket
-    const ws = new WebSocket("ws://localhost:8000/ws/simulation");
+    const ws = new WebSocket(`${WS_BASE}/ws/simulation`);
     
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -51,6 +79,24 @@ export default function SimulationPage() {
     };
   }, []);
 
+  // Poll telemetry endpoint every 10 seconds
+  useEffect(() => {
+    const fetchTelemetry = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/telemetry?limit=50`);
+        if (res.ok) {
+          const data = await res.json();
+          setTelemetry(data.telemetry ?? []);
+        }
+      } catch {
+        // silently ignore — sparkline simply won't update
+      }
+    };
+    fetchTelemetry();
+    const interval = setInterval(fetchTelemetry, 10_000);
+    return () => clearInterval(interval);
+  }, []);
+
   const addHub = () => {
     wsRef.current?.send("add_hub");
   };
@@ -69,7 +115,7 @@ export default function SimulationPage() {
     setIsChatting(true);
 
     try {
-      const response = await fetch("http://localhost:8000/chat", {
+      const response = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userMessage, session_id: sessionId }),
@@ -84,6 +130,9 @@ export default function SimulationPage() {
       setIsChatting(false);
     }
   };
+
+  const priceHistory = telemetry.map((t) => t.avg_price);
+  const queueHistory = telemetry.map((t) => t.total_queue);
 
   return (
     <div className="min-h-screen bg-[#050508] text-white overflow-hidden flex flex-col font-sans selection:bg-pink-500/30">
@@ -195,10 +244,17 @@ export default function SimulationPage() {
 
               {/* Render Resident Agents */}
               {simState.residents.map((res) => {
-                // Determine color based on state
+                // Determine color and glow based on agent state
                 const isCritical = res.battery < 30;
-                const baseColor = res.charging ? '#4ade80' : (isCritical ? '#ef4444' : '#60a5fa');
-                const glowClass = res.charging ? 'drop-shadow-[0_0_4px_rgba(74,222,128,0.8)]' : '';
+                const isWaiting = res.state === "waiting";
+                let baseColor = '#60a5fa'; // driving
+                if (res.charging) baseColor = '#4ade80';
+                else if (isWaiting) baseColor = '#facc15';
+                else if (isCritical) baseColor = '#ef4444';
+
+                let glowClass = '';
+                if (res.charging) glowClass = 'drop-shadow-[0_0_4px_rgba(74,222,128,0.8)]';
+                else if (isWaiting) glowClass = 'drop-shadow-[0_0_4px_rgba(250,204,21,0.8)]';
 
                 return (
                   <g key={res.id} className={`transition-all duration-[500ms] ease-linear ${glowClass}`} transform={`translate(${res.x}, ${res.y})`}>
@@ -298,11 +354,22 @@ export default function SimulationPage() {
                   {simState.residents.filter(r => r.charging).length}
                 </p>
               </div>
+              <div className="h-[1px] w-full bg-gradient-to-r from-white/5 to-transparent" />
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                  <p className="text-sm text-slate-400">Waiting in Queue</p>
+                </div>
+                <p className="text-3xl font-light text-yellow-400 tracking-tighter">
+                  {simState.residents.filter(r => r.state === "waiting").length}
+                </p>
+              </div>
             </div>
           </div>
 
-          {/* Bottom Widget: Live Agent Pricing */}
-          <div className="flex-1 p-7 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl flex flex-col">
+          {/* Live Hub Markets */}
+          <div className="p-7 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl flex flex-col">
              <div className="flex justify-between items-center mb-6">
                 <h2 className="text-sm font-semibold uppercase tracking-widest text-slate-400">Live Hub Markets</h2>
                 <span className="flex h-2 w-2">
@@ -311,12 +378,15 @@ export default function SimulationPage() {
                 </span>
              </div>
              
-             <div className="space-y-3 overflow-y-auto pr-2 custom-scrollbar flex-1">
+             <div className="space-y-3 overflow-y-auto pr-2 custom-scrollbar">
                {simState.hubs.map(hub => (
                  <div key={hub.id} className={`flex justify-between items-center p-4 rounded-2xl border transition-colors group ${hub.active ? 'bg-white/[0.02] border-white/5 hover:bg-white/[0.04]' : 'bg-red-950/20 border-red-900/30'}`}>
                    <div>
                      <p className={`text-sm font-medium ${hub.active ? 'text-slate-200' : 'text-red-400/80'}`}>{hub.id.toUpperCase()}{!hub.active && ' (OFFLINE)'}</p>
-                     <p className="text-xs text-slate-500 mt-0.5">Queue: <span className="text-slate-300 font-mono">{hub.queue} cars</span></p>
+                     <p className="text-xs text-slate-500 mt-0.5">
+                       Queue: <span className="text-slate-300 font-mono">{hub.queue}</span>
+                       {hub.active && <span className="ml-2">Charging: <span className="text-green-400 font-mono">{hub.slots_used ?? 0}</span></span>}
+                     </p>
                    </div>
                    <div className="text-right flex items-center justify-end">
                      {hub.active ? (
@@ -334,7 +404,35 @@ export default function SimulationPage() {
                )}
              </div>
           </div>
-          
+
+          {/* Telemetry Sparklines */}
+          <div className="p-7 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl">
+            <h2 className="text-sm font-semibold uppercase tracking-widest mb-5 text-slate-400">Historical Trends</h2>
+            {telemetry.length < 2 ? (
+              <p className="text-xs text-slate-600 italic">Collecting data…</p>
+            ) : (
+              <div className="flex flex-col gap-5">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Avg Price ($/kWh)</p>
+                  <Sparkline values={priceHistory} color="#f472b6" />
+                  <div className="flex justify-between text-[10px] text-slate-600 mt-0.5 font-mono">
+                    <span>${Math.min(...priceHistory).toFixed(2)}</span>
+                    <span>${Math.max(...priceHistory).toFixed(2)}</span>
+                  </div>
+                </div>
+                <div className="h-[1px] w-full bg-gradient-to-r from-white/5 to-transparent" />
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Total Queue Length</p>
+                  <Sparkline values={queueHistory} color="#60a5fa" />
+                  <div className="flex justify-between text-[10px] text-slate-600 mt-0.5 font-mono">
+                    <span>{Math.min(...queueHistory)}</span>
+                    <span>{Math.max(...queueHistory)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
         </div>
       </div>
     </div>
