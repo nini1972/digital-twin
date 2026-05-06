@@ -289,7 +289,7 @@ aws iam attach-role-policy \
   --policy-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:policy/github-actions-deploy-policy"
 ```
 
-> **Important:** The deploy script writes the OpenAI API key to AWS Secrets Manager (secret name pattern: `twin-<env>-openai-api-key`) before Terraform runs. The role **must** have `secretsmanager:DescribeSecret`, `secretsmanager:CreateSecret`, and `secretsmanager:PutSecretValue` on secrets matching `twin-*` — without these the deployment will fail with an `AccessDeniedException`. The provided policy already includes these permissions scoped to that pattern.
+> **Important:** Before Terraform runs, the deploy script writes the OpenAI API key to AWS Secrets Manager. By default, with `project_name = "twin"`, the secret name pattern is `twin-<env>-openai-api-key`, so the role **must** have `secretsmanager:DescribeSecret`, `secretsmanager:CreateSecret`, and `secretsmanager:PutSecretValue` on secrets matching `twin-*` — without these the deployment will fail with an `AccessDeniedException`. If you override `project_name`, the secret name changes accordingly, so you must also update the Secrets Manager resource pattern in `iam/github-actions-deploy-policy.json` (and any equivalent custom policy) to match your chosen prefix instead of `twin-*`.
 
 > **Optional Route 53 / ACM:** If you enable `use_custom_domain = true`, also attach `arn:aws:iam::aws:policy/AmazonRoute53FullAccess` and `arn:aws:iam::aws:policy/AWSCertificateManagerFullAccess` to the role.
 
