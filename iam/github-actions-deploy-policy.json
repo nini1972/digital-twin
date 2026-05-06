@@ -7,12 +7,16 @@
       "Action": [
         "secretsmanager:CreateSecret",
         "secretsmanager:DescribeSecret",
-        "secretsmanager:GetSecretValue",
         "secretsmanager:PutSecretValue",
-        "secretsmanager:TagResource",
-        "secretsmanager:UpdateSecret"
+        "secretsmanager:TagResource"
       ],
       "Resource": "arn:aws:secretsmanager:*:*:secret:twin-*"
+    },
+    {
+      "Sid": "LambdaList",
+      "Effect": "Allow",
+      "Action": "lambda:ListFunctions",
+      "Resource": "*"
     },
     {
       "Sid": "LambdaDeploy",
@@ -22,7 +26,6 @@
         "lambda:DeleteFunction",
         "lambda:GetFunction",
         "lambda:GetFunctionConfiguration",
-        "lambda:ListFunctions",
         "lambda:UpdateFunctionCode",
         "lambda:UpdateFunctionConfiguration",
         "lambda:AddPermission",
@@ -134,16 +137,6 @@
         "iam:UpdateAssumeRolePolicy"
       ],
       "Resource": "arn:aws:iam::*:role/twin-*"
-    },
-    {
-      "Sid": "BedrockDeploy",
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:InvokeModel",
-        "bedrock:ListFoundationModels",
-        "bedrock:GetFoundationModel"
-      ],
-      "Resource": "*"
     },
     {
       "Sid": "DynamoDBTerraformState",
