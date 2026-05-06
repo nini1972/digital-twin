@@ -531,7 +531,9 @@ Use the provided setup script to do everything in one step:
 .\scripts\setup-iam.ps1 -GitHubOrg YOUR_ORG -GitHubRepo YOUR_REPO
 ```
 
-Or run the bootstrap manually (bash):
+Or run the bootstrap manually:
+
+**Bash:**
 
 ```bash
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -545,6 +547,23 @@ aws iam create-policy \
 aws iam create-policy-version \
   --policy-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:policy/github-actions-deploy-policy" \
   --policy-document file://iam/github-actions-deploy-policy.json \
+  --set-as-default
+```
+
+**PowerShell:**
+
+```powershell
+$AccountId = aws sts get-caller-identity --query Account --output text
+
+# First-time only: create the policy
+aws iam create-policy `
+  --policy-name github-actions-deploy-policy `
+  --policy-document file://iam/github-actions-deploy-policy.json
+
+# Subsequent updates: create a new version and set it as default
+aws iam create-policy-version `
+  --policy-arn "arn:aws:iam::${AccountId}:policy/github-actions-deploy-policy" `
+  --policy-document file://iam/github-actions-deploy-policy.json `
   --set-as-default
 ```
 
