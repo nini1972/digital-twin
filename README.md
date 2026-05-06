@@ -229,6 +229,7 @@ In your repository go to **Settings → Environments** and create three environm
 | `AWS_ROLE_ARN` | ARN of the IAM role the workflow will assume (e.g. `arn:aws:iam::123456789012:role/github-actions-deploy`) |
 | `AWS_ACCOUNT_ID` | Your 12-digit AWS account ID |
 | `DEFAULT_AWS_REGION` | AWS region, e.g. `us-east-1` |
+| `OPENAI_API_KEY` | OpenAI API key used by the Lambda chat endpoint |
 
 #### 2. Create an IAM role for OIDC
 
@@ -530,7 +531,7 @@ Use the provided setup script to do everything in one step:
 .\scripts\setup-iam.ps1 -GitHubOrg YOUR_ORG -GitHubRepo YOUR_REPO
 ```
 
-Or run the bootstrap manually (bash / PowerShell):
+Or run the bootstrap manually (bash):
 
 ```bash
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)

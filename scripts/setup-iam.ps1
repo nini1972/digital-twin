@@ -86,6 +86,21 @@ if (-not (Test-Path $PolicyFile)) {
     exit 1
 }
 
+# Read the policy template and substitute the project name into all resource ARN
+# patterns (e.g. "twin-*" → "<ProjectName>-*") so the created policy correctly
+# scopes to the resources that Terraform will provision under the chosen prefix.
+$Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding($false)
+$PolicyContent = [System.IO.File]::ReadAllText($PolicyFile)
+if ($ProjectName -ne "twin") {
+    Write-Info "Substituting project name '$ProjectName' into policy resource patterns..."
+    # Replace the 'twin-' prefix that appears in every project-scoped resource ARN.
+    # The lookbehind covers the characters that can directly precede 'twin-' in ARNs:
+    #   ':' → e.g. "secret:twin-*", "function:twin-*", "s3:::twin-*"
+    #   '/' → e.g. "role/twin-*", "table/twin-terraform-locks"
+    #   '"' → start of a string value (defensive catch-all)
+    $PolicyContent = $PolicyContent -replace '(?<=[":/])twin-', "${ProjectName}-"
+}
+
 # ---------------------------------------------------------------------------
 # 1. GitHub OIDC identity provider
 # ---------------------------------------------------------------------------
@@ -136,7 +151,6 @@ $TrustPolicy = @"
 "@
 
 $TrustPolicyFile = Join-Path ([System.IO.Path]::GetTempPath()) "trust-policy-$([System.Guid]::NewGuid().ToString('N')).json"
-$Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($TrustPolicyFile, $TrustPolicy, $Utf8NoBomEncoding)
 
 try {
@@ -177,17 +191,37 @@ if ($LASTEXITCODE -eq 0 -and $existingPolicyArn) {
 
 if ($existingPolicy) {
     Write-Skip "Managed policy $PolicyArn"
-    Write-Info "To update the policy document run:"
-    Write-Info "  aws iam create-policy-version ``"
-    Write-Info "    --policy-arn `"$PolicyArn`" ``"
-    Write-Info "    --policy-document file://iam/github-actions-deploy-policy.json ``"
-    Write-Info "    --set-as-default"
+    if ($ProjectName -ne "twin") {
+        Write-Info "Note: the policy was created with '$ProjectName' resource patterns."
+        Write-Info "To push an updated version of the policy document, re-run this script"
+        Write-Info "and pass -PolicyName with a different name (a new policy will be created),"
+        Write-Info "or run the following PowerShell block from the repository root:"
+        Write-Info "  `$content = (Get-Content iam\github-actions-deploy-policy.json -Raw) -replace '""twin-', '""${ProjectName}-'"
+        Write-Info "  `$tmp = [IO.Path]::GetTempFileName() + '.json'"
+        Write-Info "  [IO.File]::WriteAllText(`$tmp, `$content, [Text.UTF8Encoding]::new(`$false))"
+        Write-Info "  aws iam create-policy-version --policy-arn `"$PolicyArn`" --set-as-default --policy-document `"file://`$tmp`""
+        Write-Info "  Remove-Item `$tmp"
+    } else {
+        Write-Info "To update the policy document run:"
+        Write-Info "  aws iam create-policy-version ``"
+        Write-Info "    --policy-arn `"$PolicyArn`" ``"
+        Write-Info "    --policy-document file://iam/github-actions-deploy-policy.json ``"
+        Write-Info "    --set-as-default"
+    }
 } else {
-    aws iam create-policy `
-        --policy-name $PolicyName `
-        --policy-document "file://$PolicyFile" `
-        --description "Permissions for GitHub Actions to deploy the $ProjectName project" | Out-Null
-    Write-Ok "Created managed policy: $PolicyArn"
+    # Write the (possibly substituted) policy content to a temp file so the AWS
+    # CLI receives UTF-8 without BOM regardless of the PowerShell version.
+    $PolicyTempFile = Join-Path ([System.IO.Path]::GetTempPath()) "deploy-policy-$([System.Guid]::NewGuid().ToString('N')).json"
+    try {
+        [System.IO.File]::WriteAllText($PolicyTempFile, $PolicyContent, $Utf8NoBomEncoding)
+        aws iam create-policy `
+            --policy-name $PolicyName `
+            --policy-document "file://$PolicyTempFile" `
+            --description "Permissions for GitHub Actions to deploy the $ProjectName project" | Out-Null
+        Write-Ok "Created managed policy: $PolicyArn"
+    } finally {
+        Remove-Item $PolicyTempFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -223,12 +257,13 @@ Write-Host " Role ARN  : $RoleArn" -ForegroundColor Cyan
 Write-Host " Policy ARN: $PolicyArn" -ForegroundColor Cyan
 Write-Host ""
 Write-Host " Next steps:" -ForegroundColor Yellow
-Write-Host "  1. In GitHub: Settings → Environments → create 'dev', 'test', 'prod'" -ForegroundColor White
+$envList = $Environments -join "', '"
+Write-Host "  1. In GitHub: Settings → Environments → create '$envList'" -ForegroundColor White
 Write-Host "  2. Add these secrets to each environment (or at repo level):" -ForegroundColor White
 Write-Host "       AWS_ROLE_ARN       = $RoleArn" -ForegroundColor White
 Write-Host "       AWS_ACCOUNT_ID     = $AwsAccountId" -ForegroundColor White
 Write-Host "       DEFAULT_AWS_REGION = us-east-1  (or your preferred region)" -ForegroundColor White
-Write-Host "  3. Add OPENAI_API_KEY as an environment secret." -ForegroundColor White
+Write-Host "       OPENAI_API_KEY     = <your OpenAI API key>" -ForegroundColor White
 Write-Host ""
 Write-Host " The deploy workflow is ready to run!" -ForegroundColor Green
 Write-Host ""
