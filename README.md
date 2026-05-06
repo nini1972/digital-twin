@@ -229,10 +229,21 @@ In your repository go to **Settings → Environments** and create three environm
 | `AWS_ROLE_ARN` | ARN of the IAM role the workflow will assume (e.g. `arn:aws:iam::123456789012:role/github-actions-deploy`) |
 | `AWS_ACCOUNT_ID` | Your 12-digit AWS account ID |
 | `DEFAULT_AWS_REGION` | AWS region, e.g. `us-east-1` |
+| `OPENAI_API_KEY` | OpenAI API key used by the Lambda chat endpoint |
 
 #### 2. Create an IAM role for OIDC
 
 The workflow uses `aws-actions/configure-aws-credentials` with `role-to-assume`. You need an IAM role that trusts the GitHub Actions OIDC provider.
+
+**Recommended — automated setup (Windows / PowerShell):**
+
+```powershell
+.\scripts\setup-iam.ps1 -GitHubOrg YOUR_GITHUB_ORG -GitHubRepo YOUR_REPO_NAME
+```
+
+This script is idempotent: it skips any resources that already exist and prints the role ARN and next steps when it finishes.
+
+**Manual setup (bash):**
 
 ```bash
 # 1. Add the GitHub OIDC provider to your account (once per account)
@@ -278,7 +289,7 @@ Attach a scoped custom policy that covers all services used during deployment (L
 ```bash
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-# Create the managed policy from the provided document
+# Create the managed policy from the provided document (first time only)
 aws iam create-policy \
   --policy-name github-actions-deploy-policy \
   --policy-document file://iam/github-actions-deploy-policy.json
@@ -288,6 +299,8 @@ aws iam attach-role-policy \
   --role-name github-actions-deploy \
   --policy-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:policy/github-actions-deploy-policy"
 ```
+
+> **Note:** `aws iam create-policy` is a one-time operation per AWS account. If the policy already exists you will get `EntityAlreadyExists` — that is expected and safe to ignore. To update the policy document later use `aws iam create-policy-version` instead (see [Troubleshooting](#troubleshooting)).
 
 > **Important:** Before Terraform runs, the deploy script writes the OpenAI API key to AWS Secrets Manager. By default, with `project_name = "twin"`, the secret name pattern is `twin-<env>-openai-api-key`, so the role **must** have `secretsmanager:DescribeSecret`, `secretsmanager:CreateSecret`, and `secretsmanager:PutSecretValue` on secrets matching `twin-*` — without these the deployment will fail with an `AccessDeniedException`. If you override `project_name`, the secret name changes accordingly, so you must also update the Secrets Manager resource pattern in `iam/github-actions-deploy-policy.json` (and any equivalent custom policy) to match your chosen prefix instead of `twin-*`.
 
@@ -501,6 +514,81 @@ Navigate to [http://localhost:3000/simulation](http://localhost:3000/simulation)
 - **Movement trails** — toggleable path history showing where each agent has been.
 - **Oracle chat panel** — talk to the AI; it reads live telemetry and can fire any of the tools above in response to natural-language commands (e.g. *"trigger a storm"*, *"add 5 more residents"*).
 - **Sparkline charts** — rolling history of average hub price and total queue depth fetched from `/api/telemetry`.
+
+---
+
+## Troubleshooting
+
+### GitHub Actions / IAM setup
+
+#### `NoSuchEntity` when updating the policy
+
+Running `aws iam create-policy-version` fails with `NoSuchEntity` if the managed policy has never been created in your account. `create-policy-version` only works against an **existing** policy; `create-policy` must be run first.
+
+Use the provided setup script to do everything in one step:
+
+```powershell
+.\scripts\setup-iam.ps1 -GitHubOrg YOUR_ORG -GitHubRepo YOUR_REPO
+```
+
+Or run the bootstrap manually:
+
+**Bash:**
+
+```bash
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# First-time only: create the policy
+aws iam create-policy \
+  --policy-name github-actions-deploy-policy \
+  --policy-document file://iam/github-actions-deploy-policy.json
+
+# Subsequent updates: create a new version and set it as default
+aws iam create-policy-version \
+  --policy-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:policy/github-actions-deploy-policy" \
+  --policy-document file://iam/github-actions-deploy-policy.json \
+  --set-as-default
+```
+
+**PowerShell:**
+
+```powershell
+$AccountId = aws sts get-caller-identity --query Account --output text
+
+# First-time only: create the policy
+aws iam create-policy `
+  --policy-name github-actions-deploy-policy `
+  --policy-document file://iam/github-actions-deploy-policy.json
+
+# Subsequent updates: create a new version and set it as default
+aws iam create-policy-version `
+  --policy-arn "arn:aws:iam::${AccountId}:policy/github-actions-deploy-policy" `
+  --policy-document file://iam/github-actions-deploy-policy.json `
+  --set-as-default
+```
+
+#### `EntityAlreadyExists` errors
+
+Re-running the setup commands after they have already succeeded will produce `EntityAlreadyExists` for the OIDC provider, role, or policy. These are safe to ignore — the resources are already in place. The `scripts/setup-iam.ps1` script handles this automatically by skipping resources that already exist.
+
+#### `AccessDeniedException` for Secrets Manager during deploy
+
+The deploy script writes the OpenAI API key to Secrets Manager before Terraform runs. If the deploy role is missing Secrets Manager permissions you will see:
+
+```
+❌ Error accessing Secrets Manager for 'twin-dev-openai-api-key':
+   AccessDeniedException: ...
+```
+
+Ensure the role has `secretsmanager:DescribeSecret`, `secretsmanager:CreateSecret`, and `secretsmanager:PutSecretValue` on `arn:aws:secretsmanager:*:*:secret:twin-*`. These permissions are included in `iam/github-actions-deploy-policy.json`. If you customised `project_name` in `terraform.tfvars` (e.g. `myapp`), update the resource pattern in the policy to `arn:aws:secretsmanager:*:*:secret:myapp-*` and then issue a new policy version (see above).
+
+#### Workflow fails with `credentialsClient - assuming role failed`
+
+Ensure the `token.actions.githubusercontent.com` OIDC provider exists in your AWS account **and** that the trust policy on the role lists the correct GitHub org, repo, and environment names. Re-run `scripts/setup-iam.ps1` with the correct `-GitHubOrg` and `-GitHubRepo` values if in doubt.
+
+#### `AWS_ROLE_ARN` secret not set
+
+The deploy workflow reads `AWS_ROLE_ARN` from a GitHub environment secret. If it is missing the `configure-aws-credentials` step will fail immediately. Add the secret under **Settings → Environments → \<env\> → Secrets** (or at repository level). The role ARN is printed at the end of `scripts/setup-iam.ps1` and follows the pattern `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-deploy`.
 
 ---
 
