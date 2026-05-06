@@ -136,7 +136,8 @@ $TrustPolicy = @"
 "@
 
 $TrustPolicyFile = Join-Path ([System.IO.Path]::GetTempPath()) "trust-policy-$([System.Guid]::NewGuid().ToString('N')).json"
-$TrustPolicy | Out-File -FilePath $TrustPolicyFile -Encoding utf8
+$Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($TrustPolicyFile, $TrustPolicy, $Utf8NoBomEncoding)
 
 try {
     $roleExists = $false
