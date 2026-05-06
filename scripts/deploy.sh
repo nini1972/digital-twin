@@ -40,7 +40,7 @@ else
   echo "❌ Error accessing Secrets Manager for '${OPENAI_SECRET_NAME}':" >&2
   echo "   ${DESCRIBE_OUTPUT}" >&2
   echo "   Ensure the deploy role has secretsmanager:DescribeSecret, secretsmanager:CreateSecret," >&2
-  echo "   secretsmanager:PutSecretValue, and secretsmanager:GetSecretValue on 'arn:aws:secretsmanager:*:*:secret:${OPENAI_SECRET_NAME}*'." >&2
+  echo "   and secretsmanager:PutSecretValue on 'arn:aws:secretsmanager:*:*:secret:${OPENAI_SECRET_NAME}*'." >&2
   echo "   See iam/github-actions-deploy-policy.json for the full required policy." >&2
   exit 1
 fi
