@@ -20,6 +20,29 @@ if [ -z "${OPENAI_API_KEY:-}" ]; then
   exit 1
 fi
 
+# Store the API key in Secrets Manager so the raw value never touches
+# Terraform state. The secret is created here (before terraform runs) and
+# Terraform only receives the ARN for the IAM policy and Lambda env var.
+OPENAI_SECRET_NAME="${PROJECT_NAME}-${ENVIRONMENT}-openai-api-key"
+echo "🔑 Writing OpenAI API key to Secrets Manager (${OPENAI_SECRET_NAME})..."
+DESCRIBE_OUTPUT=$(aws secretsmanager describe-secret --secret-id "$OPENAI_SECRET_NAME" 2>&1 >/dev/null) && SECRET_EXISTS=true || SECRET_EXISTS=false
+
+if [ "$SECRET_EXISTS" = "true" ]; then
+  aws secretsmanager put-secret-value \
+    --secret-id "$OPENAI_SECRET_NAME" \
+    --secret-string "$OPENAI_API_KEY"
+elif echo "$DESCRIBE_OUTPUT" | grep -q "ResourceNotFoundException"; then
+  aws secretsmanager create-secret \
+    --name "$OPENAI_SECRET_NAME" \
+    --description "OpenAI API key for ${PROJECT_NAME} ${ENVIRONMENT} Lambda" \
+    --secret-string "$OPENAI_API_KEY"
+else
+  echo "❌ Error accessing Secrets Manager for '${OPENAI_SECRET_NAME}':" >&2
+  echo "   ${DESCRIBE_OUTPUT}" >&2
+  echo "   Check IAM permissions and that the correct AWS region is configured." >&2
+  exit 1
+fi
+
 # 2. Terraform workspace & apply
 cd terraform
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -39,9 +62,9 @@ fi
 
 # Use prod.tfvars for production environment
 if [ "$ENVIRONMENT" = "prod" ]; then
-  TF_APPLY_CMD=(terraform apply -var-file=prod.tfvars -var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT" -var="openai_api_key=$OPENAI_API_KEY" -auto-approve)
+  TF_APPLY_CMD=(terraform apply -var-file=prod.tfvars -var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT" -auto-approve)
 else
-  TF_APPLY_CMD=(terraform apply -var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT" -var="openai_api_key=$OPENAI_API_KEY" -auto-approve)
+  TF_APPLY_CMD=(terraform apply -var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT" -auto-approve)
 fi
 
 echo "🎯 Applying Terraform..."

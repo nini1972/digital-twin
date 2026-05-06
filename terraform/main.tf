@@ -119,6 +119,29 @@ resource "aws_iam_role_policy_attachment" "lambda_s3" {
   role       = aws_iam_role.lambda_role.name
 }
 
+# Secrets Manager secret that holds the OpenAI API key.
+# The secret is created/updated by the deploy script before terraform runs,
+# so the raw key never appears in Terraform state.
+data "aws_secretsmanager_secret" "openai_api_key" {
+  name = "${local.name_prefix}-openai-api-key"
+}
+
+resource "aws_iam_role_policy" "lambda_secrets" {
+  name = "${local.name_prefix}-lambda-secrets"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = data.aws_secretsmanager_secret.openai_api_key.arn
+      }
+    ]
+  })
+}
+
 # Lambda function
 resource "aws_lambda_function" "api" {
   filename         = "${path.module}/../backend/lambda-deployment.zip"
@@ -133,12 +156,12 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      CORS_ORIGINS     = var.use_custom_domain ? "https://${var.root_domain},https://www.${var.root_domain}" : "https://${aws_cloudfront_distribution.main.domain_name}"
-      S3_BUCKET        = aws_s3_bucket.memory.id
-      USE_S3           = "true"
-      BEDROCK_MODEL_ID = var.bedrock_model_id
-      OPENAI_API_KEY   = var.openai_api_key
-      LLM_MODEL_ID     = var.llm_model_id
+      CORS_ORIGINS               = var.use_custom_domain ? "https://${var.root_domain},https://www.${var.root_domain}" : "https://${aws_cloudfront_distribution.main.domain_name}"
+      S3_BUCKET                  = aws_s3_bucket.memory.id
+      USE_S3                     = "true"
+      BEDROCK_MODEL_ID           = var.bedrock_model_id
+      OPENAI_API_KEY_SECRET_ARN  = data.aws_secretsmanager_secret.openai_api_key.arn
+      LLM_MODEL_ID               = var.llm_model_id
     }
   }
 
