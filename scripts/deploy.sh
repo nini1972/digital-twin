@@ -11,6 +11,15 @@ cd "$(dirname "$0")/.."        # project root
 echo "📦 Building Lambda package..."
 (cd backend && uv run deploy.py)
 
+# Guard: OPENAI_API_KEY is required for the Lambda chat endpoint.
+# Fail fast here rather than deploying a broken Lambda silently.
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "❌ Error: OPENAI_API_KEY is not set." >&2
+  echo "   Set it as a GitHub Actions environment secret (dev/test/prod)" >&2
+  echo "   or export it in your shell before running this script." >&2
+  exit 1
+fi
+
 # 2. Terraform workspace & apply
 cd terraform
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -30,9 +39,9 @@ fi
 
 # Use prod.tfvars for production environment
 if [ "$ENVIRONMENT" = "prod" ]; then
-  TF_APPLY_CMD=(terraform apply -var-file=prod.tfvars -var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT" -var="openai_api_key=${OPENAI_API_KEY:-}" -var="llm_model_id=${LLM_MODEL_ID:-gpt-4o-mini}" -auto-approve)
+  TF_APPLY_CMD=(terraform apply -var-file=prod.tfvars -var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT" -var="openai_api_key=$OPENAI_API_KEY" -auto-approve)
 else
-  TF_APPLY_CMD=(terraform apply -var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT" -var="openai_api_key=${OPENAI_API_KEY:-}" -var="llm_model_id=${LLM_MODEL_ID:-gpt-4o-mini}" -auto-approve)
+  TF_APPLY_CMD=(terraform apply -var="project_name=$PROJECT_NAME" -var="environment=$ENVIRONMENT" -var="openai_api_key=$OPENAI_API_KEY" -auto-approve)
 fi
 
 echo "🎯 Applying Terraform..."
