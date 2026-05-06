@@ -41,7 +41,7 @@ static site)        │                     │
 | [uv](https://docs.astral.sh/uv/) | Python package manager for the backend |
 | [Node.js](https://nodejs.org/) ≥ 20 | Next.js frontend |
 
-Your AWS credentials must have permissions for: Lambda, API Gateway, S3, CloudFront, IAM, Bedrock, DynamoDB, and (optionally) Route 53 and ACM.
+Your AWS credentials must have permissions for: Lambda, API Gateway, S3, CloudFront, IAM, Bedrock, DynamoDB, Secrets Manager, and (optionally) Route 53 and ACM.
 
 You must also **enable the Bedrock model** you plan to use in the [AWS Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess) before deploying.
 
@@ -273,15 +273,25 @@ aws iam create-role \
   --assume-role-policy-document file://trust-policy.json
 ```
 
-Attach the same permissions your AWS user would need for a manual deploy (Lambda, API Gateway, S3, CloudFront, IAM, Bedrock, DynamoDB, and optionally Route 53/ACM):
+Attach a scoped custom policy that covers all services used during deployment (Lambda, API Gateway, S3, CloudFront, IAM, Bedrock, DynamoDB, and Secrets Manager). A ready-to-use policy document is provided at `iam/github-actions-deploy-policy.json`:
 
 ```bash
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# Create the managed policy from the provided document
+aws iam create-policy \
+  --policy-name github-actions-deploy-policy \
+  --policy-document file://iam/github-actions-deploy-policy.json
+
+# Attach it to the role
 aws iam attach-role-policy \
   --role-name github-actions-deploy \
-  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess   # Scope this down for production
+  --policy-arn "arn:aws:iam::${AWS_ACCOUNT_ID}:policy/github-actions-deploy-policy"
 ```
 
-> **Tip:** For production, replace `AdministratorAccess` with a custom policy limited to the specific services used by Terraform.
+> **Important:** Before Terraform runs, the deploy script writes the OpenAI API key to AWS Secrets Manager. By default, with `project_name = "twin"`, the secret name pattern is `twin-<env>-openai-api-key`, so the role **must** have `secretsmanager:DescribeSecret`, `secretsmanager:CreateSecret`, and `secretsmanager:PutSecretValue` on secrets matching `twin-*` — without these the deployment will fail with an `AccessDeniedException`. If you override `project_name`, the secret name changes accordingly, so you must also update the Secrets Manager resource pattern in `iam/github-actions-deploy-policy.json` (and any equivalent custom policy) to match your chosen prefix instead of `twin-*`.
+
+> **Optional Route 53 / ACM:** If you enable `use_custom_domain = true`, also attach `arn:aws:iam::aws:policy/AmazonRoute53FullAccess` and `arn:aws:iam::aws:policy/AWSCertificateManagerFullAccess` to the role.
 
 ---
 
