@@ -32,7 +32,7 @@
         "lambda:UntagResource",
         "lambda:ListTags"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:lambda:*:*:function:twin-*"
     },
     {
       "Sid": "APIGatewayDeploy",
@@ -49,7 +49,7 @@
       "Resource": "*"
     },
     {
-      "Sid": "S3Deploy",
+      "Sid": "S3DeployBucketLevel",
       "Effect": "Allow",
       "Action": [
         "s3:CreateBucket",
@@ -67,7 +67,6 @@
         "s3:GetBucketWebsite",
         "s3:GetEncryptionConfiguration",
         "s3:GetLifecycleConfiguration",
-        "s3:GetObject",
         "s3:GetOwnershipControls",
         "s3:GetReplicationConfiguration",
         "s3:ListBucket",
@@ -76,11 +75,19 @@
         "s3:PutBucketPublicAccessBlock",
         "s3:PutBucketTagging",
         "s3:PutBucketVersioning",
-        "s3:PutBucketWebsite",
+        "s3:PutBucketWebsite"
+      ],
+      "Resource": "arn:aws:s3:::twin-*"
+    },
+    {
+      "Sid": "S3DeployObjectLevel",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
         "s3:PutObject",
         "s3:DeleteObject"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:s3:::twin-*/*"
     },
     {
       "Sid": "CloudFrontDeploy",
@@ -126,7 +133,7 @@
         "iam:UntagRole",
         "iam:UpdateAssumeRolePolicy"
       ],
-      "Resource": "*"
+      "Resource": "arn:aws:iam::*:role/twin-*"
     },
     {
       "Sid": "BedrockDeploy",
