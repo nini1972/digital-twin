@@ -22,6 +22,19 @@ variable "bedrock_model_id" {
   default     = "amazon.nova-pro-v1:0"
 }
 
+variable "openai_api_key" {
+  description = "OpenAI API key passed to the Lambda function"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "llm_model_id" {
+  description = "OpenAI model ID used by the Lambda function (e.g. gpt-4o-mini)"
+  type        = string
+  default     = "gpt-4o-mini"
+}
+
 variable "lambda_timeout" {
   description = "Lambda function timeout in seconds"
   type        = number
