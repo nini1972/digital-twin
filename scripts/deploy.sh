@@ -11,6 +11,38 @@ cd "$(dirname "$0")/.."        # project root
 echo "📦 Building Lambda package..."
 (cd backend && uv run deploy.py)
 
+# Guard: OPENAI_API_KEY is required for the Lambda chat endpoint.
+# Fail fast here rather than deploying a broken Lambda silently.
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "❌ Error: OPENAI_API_KEY is not set." >&2
+  echo "   Set it as a GitHub Actions environment secret (dev/test/prod)" >&2
+  echo "   or export it in your shell before running this script." >&2
+  exit 1
+fi
+
+# Store the API key in Secrets Manager so the raw value never touches
+# Terraform state. The secret is created here (before terraform runs) and
+# Terraform only receives the ARN for the IAM policy and Lambda env var.
+OPENAI_SECRET_NAME="${PROJECT_NAME}-${ENVIRONMENT}-openai-api-key"
+echo "🔑 Writing OpenAI API key to Secrets Manager (${OPENAI_SECRET_NAME})..."
+DESCRIBE_OUTPUT=$(aws secretsmanager describe-secret --secret-id "$OPENAI_SECRET_NAME" 2>&1 >/dev/null) && SECRET_EXISTS=true || SECRET_EXISTS=false
+
+if [ "$SECRET_EXISTS" = "true" ]; then
+  aws secretsmanager put-secret-value \
+    --secret-id "$OPENAI_SECRET_NAME" \
+    --secret-string "$OPENAI_API_KEY"
+elif echo "$DESCRIBE_OUTPUT" | grep -q "ResourceNotFoundException"; then
+  aws secretsmanager create-secret \
+    --name "$OPENAI_SECRET_NAME" \
+    --description "OpenAI API key for ${PROJECT_NAME} ${ENVIRONMENT} Lambda" \
+    --secret-string "$OPENAI_API_KEY"
+else
+  echo "❌ Error accessing Secrets Manager for '${OPENAI_SECRET_NAME}':" >&2
+  echo "   ${DESCRIBE_OUTPUT}" >&2
+  echo "   Check IAM permissions and that the correct AWS region is configured." >&2
+  exit 1
+fi
+
 # 2. Terraform workspace & apply
 cd terraform
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)

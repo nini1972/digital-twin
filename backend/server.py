@@ -42,12 +42,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Secrets Manager client — created once at module level so it is reused across
+# requests (Lambda warm starts) without repeated client-construction overhead.
+# Only created when OPENAI_API_KEY_SECRET_ARN is present (Lambda production).
+_OPENAI_API_KEY_SECRET_ARN = os.getenv("OPENAI_API_KEY_SECRET_ARN")
+_sm_client = (
+    boto3.client(
+        "secretsmanager",
+        region_name=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION"),
+    )
+    if _OPENAI_API_KEY_SECRET_ARN
+    else None
+)
+
+
+def _resolve_openai_api_key() -> Optional[str]:
+    """Return the OpenAI API key.
+
+    Checks the OPENAI_API_KEY environment variable first (local dev / explicit
+    injection).  Falls back to fetching the value from AWS Secrets Manager when
+    OPENAI_API_KEY_SECRET_ARN is set (Lambda production), so the raw key is
+    never embedded in the Lambda environment or Terraform state.
+
+    Returns:
+        Optional[str]: The OpenAI API key if found via env var or Secrets Manager,
+            or None if no source is configured or retrieval fails.
+    """
+    key = os.getenv("OPENAI_API_KEY")
+    if key:
+        return key
+    if _OPENAI_API_KEY_SECRET_ARN and _sm_client is not None:
+        try:
+            resp = _sm_client.get_secret_value(SecretId=_OPENAI_API_KEY_SECRET_ARN)
+            return resp["SecretString"]
+        except ClientError as e:
+            print(
+                f"Warning: Could not retrieve OpenAI key from Secrets Manager: {e}. "
+                "Verify that the secret exists, that the Lambda execution role has "
+                "secretsmanager:GetSecretValue permission, and that "
+                "OPENAI_API_KEY_SECRET_ARN points to the correct secret. "
+                "The /chat endpoint will be unavailable until this is resolved."
+            )
+    return None
+
+
 # Initialize OpenAI client
 try:
-    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    openai_client = OpenAI(api_key=_resolve_openai_api_key())
 except Exception as e:
     print(f"Warning: Failed to initialize OpenAI client: {e}")
     openai_client = None
+
 
 LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "gpt-4o-mini")
 ALLOW_CODE_EXECUTION = os.getenv("ALLOW_CODE_EXECUTION", "false").lower() == "true"
