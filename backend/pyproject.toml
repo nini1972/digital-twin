@@ -11,4 +11,6 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.22",
     "uvicorn>=0.40.0",
+    "redis[asyncio]>=5.0",
+    "chromadb>=0.5",
 ]

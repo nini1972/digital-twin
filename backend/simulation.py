@@ -80,7 +80,7 @@ class ResidentAgent(Agent):
         self.destination_x = random.uniform(0, 100)
         self.destination_y = random.uniform(0, 100)
         self.state = ResidentState.DRIVING
-        self.current_hub = None
+        self.current_hub: ChargingHubAgent | None = None
         self.speed = random.uniform(0.5, 2.0)
 
     @property
@@ -208,7 +208,11 @@ class SimulationEngine:
                     "y": h.y,
                     "price": h.price,
                     "queue": h.queue_length,
+                    "queue_total": h.queue_length,
+                    "waiting": len(h.waiting_queue),
+                    "charging": len(h.charging_slots),
                     "slots_used": len(h.charging_slots),
+                    "capacity": h.capacity,
                     "active": h.active,
                 }
                 for h in self.hubs

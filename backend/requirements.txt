@@ -5,3 +5,6 @@ python-multipart
 boto3
 pypdf
 mangum
+openai
+redis[asyncio]>=5.0
+chromadb>=0.5

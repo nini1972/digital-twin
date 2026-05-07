@@ -3,6 +3,9 @@ import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
+import sys
+import subprocess
+import pathlib
 from dotenv import load_dotenv
 from typing import Optional, List, Dict
 import json
@@ -13,6 +16,13 @@ from botocore.exceptions import ClientError
 from openai import OpenAI
 from context import prompt
 from simulation import engine
+from city_simulation import city_engine
+from city_context import city_prompt
+from redis_bus import bus
+from memory.chroma import vector_memory
+from agents.scout import EVScoutAgent, TrafficScoutAgent
+from agents.analyzer import DemandAnalyzerAgent, CongestionAnalyzerAgent
+from agents.chief import ChiefOracleAgent
 # Load environment variables from the root .env file
 dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 load_dotenv(dotenv_path)
@@ -22,14 +32,42 @@ from database import init_db, load_conversation_history, save_messages, save_tel
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize SQLite database
+    # Initialize SQLite database (creates tables incl. new city ones)
     init_db()
-    # Start the background simulation loop
+    # Initialize vector memory (ChromaDB)
+    vector_memory.init()
+    # Connect event bus (Redis or in-process fallback)
+    await bus.connect()
+    # --- Personal twin simulation ---
     task = asyncio.create_task(engine.run())
+    # --- City twin multi-agent setup ---
+    ev_scout = EVScoutAgent()
+    traffic_scout = TrafficScoutAgent()
+    demand_analyzer = DemandAnalyzerAgent()
+    congestion_analyzer = CongestionAnalyzerAgent()
+    chief = ChiefOracleAgent(
+        demand_analyzer=demand_analyzer,
+        congestion_analyzer=congestion_analyzer,
+    )
+    # Register Scout agents as city engine tick subscribers
+    city_engine.agent_subscribers.append(ev_scout.on_tick)
+    city_engine.agent_subscribers.append(traffic_scout.on_tick)
+    city_engine.agent_subscribers.append(chief.on_tick)
+    # Start city engine and analyzer background tasks
+    city_task = asyncio.create_task(city_engine.run())
+    demand_task = asyncio.create_task(demand_analyzer.run())
+    congestion_task = asyncio.create_task(congestion_analyzer.run())
+    # Expose chief globally so city chat endpoint can use it
+    app.state.chief = chief
     yield
     # Shutdown
     engine.running = False
+    city_engine.running = False
     task.cancel()
+    city_task.cancel()
+    demand_task.cancel()
+    congestion_task.cancel()
+    await bus.close()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -584,6 +622,471 @@ async def simulation_websocket(websocket: WebSocket):
     except WebSocketDisconnect:
         if send_state in engine.subscribers:
             engine.subscribers.remove(send_state)
+
+
+# ---------------------------------------------------------------------------
+# City Digital Twin endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/city/chat", response_model=ChatResponse)
+async def city_chat(request: ChatRequest):
+    """City Oracle chat — separate conversation history from personal twin."""
+    try:
+        session_id = request.session_id or str(uuid.uuid4())
+        conversation = load_conversation(f"city_{session_id}")
+        if not openai_client:
+            raise HTTPException(status_code=500, detail="OpenAI client is not initialized")
+        # Build city-aware messages
+        sim_state = city_engine.get_state()
+        system_msg = city_prompt(sim_state)
+        messages = [{"role": "system", "content": system_msg}]
+        for msg in conversation[-20:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": request.message})
+        city_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_hub_active_state",
+                    "description": "Set a city charging hub active or non-active state by hub id.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "hub_id": {"type": "string", "description": "Hub id, e.g. hub_0"},
+                            "active": {"type": "boolean", "description": "true=active, false=non-active"},
+                        },
+                        "required": ["hub_id", "active"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "trigger_hub_maintenance",
+                    "description": "Randomly disable one active city hub to simulate breakdown/maintenance.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_hub_price",
+                    "description": "Set city hub price manually.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "hub_id": {"type": "string"},
+                            "price": {"type": "number"},
+                        },
+                        "required": ["hub_id", "price"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_city_resident",
+                    "description": "Add one EV resident to city simulation.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_city_hub",
+                    "description": "Add one charging hub to city simulation.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_city_traffic",
+                    "description": "Add one traffic agent to city simulation.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "reroute_traffic",
+                    "description": "Reroute all traffic agents currently in a congested zone to new destinations outside that zone, immediately reducing congestion there.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "zone": {"type": "string", "description": "Zone key in 'zx,zy' format, e.g. '0,2' or '3,1'."},
+                        },
+                        "required": ["zone"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_signal_timing",
+                    "description": "Adjust smart traffic signal timing in a zone by setting a speed multiplier. Lower multiplier throttles traffic flow (simulates red-light phases). 1.0 = normal, 0.3 = heavy throttle. Use to prevent new vehicles from flooding a congested zone.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "zone": {"type": "string", "description": "Zone key in 'zx,zy' format, e.g. '0,2'."},
+                            "multiplier": {"type": "number", "description": "Speed multiplier 0.1..1.0. 1.0 clears the restriction."},
+                        },
+                        "required": ["zone", "multiplier"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "run_python",
+                    "description": (
+                        "Execute a Python code snippet to analyse the current live city simulation data. "
+                        "Two variables are pre-injected: "
+                        "`state` (dict) – full simulation snapshot with keys: residents (list of {id,x,y,state,battery,charging,current_hub}), "
+                        "hubs (list of {id,x,y,active,price,capacity,queue,charging_slots}), "
+                        "traffic (list of {id,x,y}), zone_congestion (dict), zone_speed_limits (dict), weather (str); "
+                        "`metrics` (dict) – aggregated city metrics with keys: residents, traffic_agents, active_hubs, total_queue, avg_price, "
+                        "charging_count, seeking_count, avg_congestion, congestion_hotspot, weather. "
+                        "Use print() to output results. Allowed imports: json, math, statistics, collections, itertools, datetime. "
+                        "Max code length: 4000 chars. Execution timeout: 5 seconds."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string", "description": "Python code to execute. Use print() to return analysis results."},
+                        },
+                        "required": ["code"],
+                    },
+                },
+            },
+        ]
+
+        response = openai_client.chat.completions.create(
+            model=LLM_MODEL_ID,
+            messages=messages,
+            tools=city_tools,
+            max_tokens=1024,
+        )
+
+        response_message = response.choices[0].message
+        tool_calls = response_message.tool_calls
+
+        if tool_calls:
+            messages.append(response_message)
+
+            for tool_call in tool_calls:
+                function_name = getattr(getattr(tool_call, "function", None), "name", "")
+                try:
+                    function_args = json.loads(getattr(tool_call.function, "arguments", "{}"))
+                except Exception:
+                    function_args = {}
+
+                result_body = {"status": "error", "message": "Unknown city tool."}
+
+                if function_name == "set_hub_active_state":
+                    from simulation import ResidentState
+
+                    hub_id = function_args.get("hub_id")
+                    active = bool(function_args.get("active", True))
+                    hub = next((h for h in city_engine.hubs if h.id == hub_id), None)
+                    if not hub:
+                        result_body = {"status": "error", "message": f"Hub {hub_id} not found."}
+                    else:
+                        hub.active = active
+                        impacted = 0
+                        if not active:
+                            # Stop charging/waiting immediately when hub is disabled.
+                            for res in city_engine.residents:
+                                if getattr(res, "current_hub", None) is hub:
+                                    if getattr(res, "state", None) in (ResidentState.WAITING, ResidentState.CHARGING):
+                                        impacted += 1
+                                        hub.release(res.id)
+                                        res.current_hub = None
+                                        res.state = ResidentState.SEEKING
+                            hub.waiting_queue.clear()
+                            hub.charging_slots.clear()
+                        result_body = {
+                            "status": "success",
+                            "message": f"Hub {hub.id} set to {'ACTIVE' if active else 'NON_ACTIVE'}.",
+                            "impacted_residents": impacted,
+                        }
+                elif function_name == "trigger_hub_maintenance":
+                    import random
+
+                    active_hubs = [h for h in city_engine.hubs if h.active]
+                    if not active_hubs:
+                        result_body = {"status": "error", "message": "No active hubs available for maintenance."}
+                    else:
+                        selected = random.choice(active_hubs)
+                        selected.active = False
+                        selected.waiting_queue.clear()
+                        selected.charging_slots.clear()
+                        result_body = {
+                            "status": "success",
+                            "message": f"Maintenance triggered: {selected.id} set to NON_ACTIVE.",
+                        }
+                elif function_name == "set_hub_price":
+                    hub_id = function_args.get("hub_id")
+                    price = function_args.get("price")
+                    hub = next((h for h in city_engine.hubs if h.id == hub_id), None)
+                    if not hub:
+                        result_body = {"status": "error", "message": f"Hub {hub_id} not found."}
+                    else:
+                        hub.price = float(price)
+                        result_body = {"status": "success", "message": f"Set {hub.id} price to {hub.price:.3f}."}
+                elif function_name == "add_city_resident":
+                    from simulation import ResidentAgent
+
+                    new_res = ResidentAgent(f"res_{len(city_engine.residents)}")
+                    city_engine.residents.append(new_res)
+                    result_body = {"status": "success", "message": f"Added resident {new_res.id}."}
+                elif function_name == "add_city_hub":
+                    from simulation import ChargingHubAgent
+
+                    new_hub = ChargingHubAgent(f"hub_{len(city_engine.hubs)}")
+                    city_engine.hubs.append(new_hub)
+                    result_body = {"status": "success", "message": f"Added hub {new_hub.id}."}
+                elif function_name == "add_city_traffic":
+                    from city_simulation import TrafficFlowAgent
+
+                    new_t = TrafficFlowAgent(f"traffic_{len(city_engine.traffic_agents)}")
+                    city_engine.traffic_agents.append(new_t)
+                    result_body = {"status": "success", "message": f"Added traffic agent {new_t.id}."}
+                elif function_name == "reroute_traffic":
+                    zone = function_args.get("zone", "")
+                    if not zone:
+                        result_body = {"status": "error", "message": "zone parameter required."}
+                    else:
+                        count = city_engine.reroute_traffic_from_zone(zone)
+                        result_body = {
+                            "status": "success",
+                            "message": f"Rerouted {count} traffic agent(s) out of zone {zone}.",
+                            "rerouted": count,
+                        }
+                elif function_name == "set_signal_timing":
+                    zone = function_args.get("zone", "")
+                    multiplier = float(function_args.get("multiplier", 1.0))
+                    if not zone:
+                        result_body = {"status": "error", "message": "zone parameter required."}
+                    else:
+                        city_engine.set_zone_speed_limit(zone, multiplier)
+                        action = "cleared" if multiplier >= 1.0 else f"set to {multiplier:.1f}x"
+                        result_body = {
+                            "status": "success",
+                            "message": f"Signal timing for zone {zone} {action}.",
+                        }
+
+                elif function_name == "run_python":
+                    code = function_args.get("code", "")
+                    if not code:
+                        result_body = {"status": "error", "message": "code parameter required."}
+                    elif len(code) > 4000:
+                        result_body = {"status": "error", "message": "Code exceeds 4000 character limit."}
+                    else:
+                        try:
+                            runner_path = str(pathlib.Path(__file__).parent / "agents" / "code_runner.py")
+                            sim_state = city_engine.get_state()
+                            sim_metrics = city_engine.get_city_metrics()
+                            proc = subprocess.run(
+                                [sys.executable, runner_path],
+                                input=json.dumps({"code": code, "state": sim_state, "metrics": sim_metrics}),
+                                capture_output=True,
+                                text=True,
+                                timeout=5,
+                            )
+                            runner_result = json.loads(proc.stdout) if proc.stdout.strip() else {"output": "", "error": "No output from runner."}
+                            if runner_result.get("error"):
+                                result_body = {"status": "error", "message": runner_result["error"], "output": runner_result.get("output", "")}
+                            else:
+                                result_body = {"status": "success", "output": runner_result.get("output", "")}
+                        except subprocess.TimeoutExpired:
+                            result_body = {"status": "error", "message": "Code execution timed out after 5 seconds."}
+                        except Exception as exc:
+                            result_body = {"status": "error", "message": f"Runner error: {exc}"}
+
+                messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": json.dumps(result_body),
+                })
+
+            follow_up = openai_client.chat.completions.create(
+                model=LLM_MODEL_ID,
+                messages=messages,
+                max_tokens=1024,
+            )
+            assistant_message = follow_up.choices[0].message.content
+        else:
+            assistant_message = response_message.content
+
+        assistant_message = assistant_message or "I could not generate a response."
+        timestamp = datetime.now().isoformat()
+        conversation.append({"role": "user", "content": request.message, "timestamp": timestamp})
+        conversation.append({"role": "assistant", "content": assistant_message, "timestamp": timestamp})
+        save_conversation(f"city_{session_id}", conversation)
+        return ChatResponse(response=assistant_message, session_id=session_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/city/decisions")
+async def city_decisions(limit: int = Query(default=10, ge=1, le=50)):
+    """Return the most recent Chief Oracle actuation decisions."""
+    try:
+        from database import load_recent_decisions
+        raw = load_recent_decisions(limit=limit * 3)
+        seen: set[tuple[str, str]] = set()
+        deduped_latest_first = []
+        for item in reversed(raw):
+            key = (item.get("type", ""), item.get("description", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_latest_first.append(item)
+            if len(deduped_latest_first) >= limit:
+                break
+        return {"decisions": list(reversed(deduped_latest_first))}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/city/decisions")
+async def city_decisions_clear():
+    """Clear all stored Chief Oracle decisions for a clean slate."""
+    try:
+        from database import clear_agent_decisions
+        deleted = clear_agent_decisions()
+        return {"deleted": deleted}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/city/memory")
+async def city_memory_query(q: str = Query(default="charging demand", min_length=1, max_length=200)):
+    """Semantic search against the city twin vector memory."""
+    try:
+        results = vector_memory.query(q, n_results=5)
+        return {"query": q, "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/city/agents/flow")
+async def city_agents_flow():
+    """Describe city multi-agent roles and the executable tools available to City Oracle chat."""
+    return {
+        "tiers": [
+            {
+                "tier": "Scout",
+                "agents": [
+                    {
+                        "name": "EVScoutAgent",
+                        "tasks": [
+                            "Monitor hub saturation",
+                            "Detect price spikes",
+                            "Detect demand bursts",
+                        ],
+                        "outputs": ["CHANNEL_SCOUT_EV"],
+                    },
+                    {
+                        "name": "TrafficScoutAgent",
+                        "tasks": ["Monitor zone congestion", "Detect persistent hotspots"],
+                        "outputs": ["CHANNEL_SCOUT_TRAFFIC"],
+                    },
+                ],
+            },
+            {
+                "tier": "Analyzer",
+                "agents": [
+                    {
+                        "name": "DemandAnalyzerAgent",
+                        "tasks": [
+                            "Aggregate EV scout events in rolling window",
+                            "Emit saturation and demand-burst findings",
+                            "Store findings in vector memory",
+                        ],
+                        "inputs": ["CHANNEL_SCOUT_EV"],
+                    },
+                    {
+                        "name": "CongestionAnalyzerAgent",
+                        "tasks": [
+                            "Aggregate traffic hotspot events",
+                            "Emit persistent hotspot findings",
+                            "Store findings in vector memory",
+                        ],
+                        "inputs": ["CHANNEL_SCOUT_TRAFFIC"],
+                    },
+                ],
+            },
+            {
+                "tier": "Chief",
+                "agents": [
+                    {
+                        "name": "ChiefOracleAgent",
+                        "tasks": [
+                            "Synthesize analyzer findings every 30 ticks",
+                            "Write decisions to agent_decisions",
+                            "Avoid duplicate decisions with cooldown",
+                        ],
+                    }
+                ],
+            },
+        ],
+        "city_oracle_chat_tools": [
+            "set_hub_active_state",
+            "trigger_hub_maintenance",
+            "set_hub_price",
+            "add_city_resident",
+            "add_city_hub",
+            "add_city_traffic",
+            "reroute_traffic",
+            "set_signal_timing",
+            "run_python",
+        ],
+        "notes": [
+            "City Oracle now has executable control tools in /city/chat.",
+            "set_hub_active_state supports ACTIVE/NON_ACTIVE transitions per hub id.",
+            "reroute_traffic forces agents in a congested zone to pick new destinations.",
+            "set_signal_timing applies a per-zone speed multiplier (0.1=heavy throttle, 1.0=clear).",
+            "run_python executes Oracle-authored Python in a sandboxed subprocess with live state+metrics injected.",
+        ],
+    }
+
+
+@app.websocket("/ws/city")
+async def city_websocket(websocket: WebSocket):
+    """Streams city simulation state including traffic agents and zone congestion."""
+    await websocket.accept()
+
+    async def send_city_state(state):
+        try:
+            await websocket.send_json(state)
+        except Exception:
+            pass
+
+    city_engine.subscribers.append(send_city_state)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            if data == "add_hub":
+                from simulation import ChargingHubAgent
+                new_hub = ChargingHubAgent(f"hub_{len(city_engine.hubs)}")
+                city_engine.hubs.append(new_hub)
+            elif data == "add_resident":
+                from simulation import ResidentAgent
+                new_res = ResidentAgent(f"res_{len(city_engine.residents)}")
+                city_engine.residents.append(new_res)
+            elif data == "add_traffic":
+                from city_simulation import TrafficFlowAgent
+                new_t = TrafficFlowAgent(f"traffic_{len(city_engine.traffic_agents)}")
+                city_engine.traffic_agents.append(new_t)
+    except WebSocketDisconnect:
+        if send_city_state in city_engine.subscribers:
+            city_engine.subscribers.remove(send_city_state)
+
 
 if __name__ == "__main__":
     import uvicorn

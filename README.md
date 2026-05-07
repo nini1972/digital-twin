@@ -27,7 +27,9 @@ static site)        │                     │
 - **Fully serverless** — Lambda + API Gateway, scales to zero when idle
 - **One-command deploy** — a single script builds the Lambda package, runs Terraform, and syncs the frontend to S3
 - **Optional custom domain** — supports Route 53 + ACM certificate setup for a custom domain
-- **Agentic EV Micro-Twin** — a live multi-agent city simulation (resident EVs + charging hubs) runs in the background; the Oracle AI can observe and manipulate it in real time via tool calling
+- **Agentic EV Micro-Twin** — a live multi-agent city simulation (resident EVs, charging hubs, traffic flow, congestion zones, adaptive pricing) runs in the background
+- **Executable City Oracle** — the Oracle can actuate the simulation in real time by calling backend tools to reroute traffic, adjust zone signal timing, change hub state and pricing, and add new agents
+- **Sandboxed live analysis** — the Oracle can run bounded Python snippets against live city state and aggregate metrics through a sandboxed subprocess tool
 
 ---
 
@@ -57,12 +59,18 @@ digital-twin/
 │   │   ├── summary.txt         # Free-form professional bio
 │   │   ├── style.txt           # Communication style notes
 │   │   └── linkedin.pdf        # LinkedIn profile export
-│   ├── server.py               # FastAPI application
+│   ├── agents/
+│   │   └── code_runner.py      # Sandboxed Python executor used by the City Oracle
+│   ├── server.py               # FastAPI application (chat + city twin APIs)
 │   ├── lambda_handler.py       # Mangum adapter for AWS Lambda
 │   ├── context.py              # Builds the AI system prompt from your data
+│   ├── city_context.py         # Builds the City Oracle prompt and tool guidance
 │   ├── resources.py            # Loads the data files at startup
-│   ├── simulation.py           # Multi-agent EV city simulation (agents + engine)
-│   ├── database.py             # SQLite helpers (conversations, telemetry, market events)
+│   ├── simulation.py           # Base EV simulation primitives
+│   ├── city_simulation.py      # City-scale EV + traffic simulation engine
+│   ├── redis_bus.py            # Redis event bus with in-process fallback
+│   ├── database.py             # SQLite helpers (conversations, telemetry, market events, agent decisions)
+│   ├── memory/                 # Local persisted chat/session memory during development
 │   ├── deploy.py               # Packages the Lambda deployment zip
 │   ├── pyproject.toml          # Python dependencies (managed by uv)
 │   └── requirements.txt        # Pinned requirements for Lambda packaging
@@ -70,6 +78,7 @@ digital-twin/
 │   ├── app/
 │   │   ├── twin/               # /twin route — cinematic landing / welcome page
 │   │   ├── chat/               # /chat route — the main chat interface
+│   │   ├── city/               # /city route — live city twin dashboard + Oracle controls
 │   │   ├── simulation/         # /simulation route — live EV city simulation dashboard
 │   │   └── page.tsx            # Root redirect → /twin
 │   ├── components/
@@ -168,10 +177,12 @@ cp .env.example .env
 ```bash
 cd backend
 uv sync                         # Install dependencies
-uv run uvicorn server:app --reload
+uv run python -m uvicorn server:app --reload
 ```
 
 The API is now available at `http://localhost:8000`.
+
+Run the backend from the `backend/` directory. Some local resources are loaded from `./data/...`, so starting it from the repo root can fail.
 
 By default, conversation history is stored in the `memory/` directory (relative to the project root). Set `USE_S3=true` and `S3_BUCKET=<bucket>` in `.env` to use S3 instead.
 
@@ -185,6 +196,31 @@ npm run dev
 
 Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing page experience, [http://localhost:3000/chat](http://localhost:3000/chat) for the chat interface, or [http://localhost:3000/simulation](http://localhost:3000/simulation) for the live simulation dashboard. The chat calls `http://127.0.0.1:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
 
+The city twin UI is available at [http://localhost:3000/city](http://localhost:3000/city). It connects to the live city websocket and the `/city/chat` Oracle endpoint.
+
+### City Oracle capabilities
+
+The City Oracle can both observe and control the live simulation through backend tool calls exposed by `/city/chat`.
+
+Current Oracle tools:
+
+- `set_hub_active_state`
+- `trigger_hub_maintenance`
+- `set_hub_price`
+- `add_city_resident`
+- `add_city_hub`
+- `add_city_traffic`
+- `reroute_traffic`
+- `set_signal_timing`
+- `run_python`
+
+`run_python` executes bounded Python against live city data in a sandboxed subprocess. Two variables are injected into the tool runtime:
+
+- `state` — full simulation snapshot (`residents`, `hubs`, `traffic`, `zone_congestion`, `zone_speed_limits`, `weather`)
+- `metrics` — aggregate city KPIs (`residents`, `traffic_agents`, `active_hubs`, `total_queue`, `avg_price`, `charging_count`, `seeking_count`, `avg_congestion`, `congestion_hotspot`, `weather`)
+
+The sandbox blocks unsafe builtins and imports, limits code size, captures printed output, and enforces a short execution timeout.
+
 ### Backend API endpoints
 
 | Method | Path | Description |
@@ -192,9 +228,15 @@ Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing pa
 | `GET` | `/` | Service info |
 | `GET` | `/health` | Health check |
 | `POST` | `/chat` | Send a message, receive a reply |
+| `POST` | `/city/chat` | Send a message to the City Oracle and allow tool execution |
 | `GET` | `/conversation/{session_id}` | Retrieve conversation history |
 | `GET` | `/api/telemetry` | Historical simulation telemetry and market events |
 | `WebSocket` | `/ws/simulation` | Real-time simulation state stream |
+| `WebSocket` | `/ws/city` | Real-time city twin state stream |
+| `GET` | `/city/decisions` | Latest deduplicated Chief Oracle decisions |
+| `DELETE` | `/city/decisions` | Clear stored Chief Oracle decisions |
+| `GET` | `/city/memory` | Semantic query over city vector memory |
+| `GET` | `/city/agents/flow` | City multi-agent topology and tool inventory |
 
 ---
 

@@ -1,0 +1,288 @@
+"""City simulation: combined EV charging + urban traffic.
+
+Extends the base EV simulation engine with TrafficFlowAgent — non-EV vehicles
+that move around the grid and create zone-level congestion.  Congestion raises
+battery drain for EV residents passing through the affected zone, forcing more
+frequent charging stops and pressuring hub capacity.
+"""
+
+import random
+import asyncio
+from typing import List, Callable
+
+from simulation import SimulationEngine, ResidentAgent, ChargingHubAgent
+
+
+class TrafficFlowAgent:
+    """A non-EV vehicle that contributes to local road congestion."""
+
+    def __init__(self, agent_id: str):
+        self.id = agent_id
+        self.type = "traffic"
+        self.x = random.uniform(0, 100)
+        self.y = random.uniform(0, 100)
+        self.speed = random.uniform(1.0, 3.0)
+        self.speed_multiplier: float = 1.0  # Modified by zone signal timing
+        self.destination_x = random.uniform(0, 100)
+        self.destination_y = random.uniform(0, 100)
+
+    def update(self):
+        dx = self.destination_x - self.x
+        dy = self.destination_y - self.y
+        dist = (dx ** 2 + dy ** 2) ** 0.5
+        if dist > 1:
+            effective_speed = self.speed * self.speed_multiplier
+            self.x += (dx / dist) * effective_speed
+            self.y += (dy / dist) * effective_speed
+        else:
+            self.destination_x = random.uniform(0, 100)
+            self.destination_y = random.uniform(0, 100)
+
+
+class CitySimulationEngine(SimulationEngine):
+    """Extended engine that adds urban traffic + zone congestion mechanics."""
+
+    # 100-unit grid divided into 5×5 zones (each zone = 20×20 units)
+    ZONE_SIZE = 20
+    # Maximum extra battery drain added at 100% zone congestion
+    CONGESTION_DRAIN_BONUS = 0.15
+    MIN_PRICE = 0.10
+    MAX_PRICE = 0.80
+
+    def __init__(self):
+        super().__init__()
+        # Override scale: larger city
+        self.residents = [ResidentAgent(f"res_{i}") for i in range(25)]
+        self.hubs = [ChargingHubAgent(f"hub_{i}") for i in range(4)]
+        self.traffic_agents: List[TrafficFlowAgent] = [
+            TrafficFlowAgent(f"traffic_{i}") for i in range(15)
+        ]
+        # zone_key ("zx,zy") → congestion 0..1
+        self.zone_congestion: dict[str, float] = {}
+        # zone_key → speed multiplier (1.0 = normal, <1.0 = throttled by signal timing)
+        self.zone_speed_limits: dict[str, float] = {}
+        # Callbacks invoked after each tick: (state_dict, tick_counter) → None
+        # Used by Scout agents rather than WebSocket subscribers
+        self.agent_subscribers: List[Callable] = []
+
+    # ------------------------------------------------------------------
+    # Zone helpers
+    # ------------------------------------------------------------------
+
+    def _zone_key(self, x: float, y: float) -> str:
+        zx = int(x // self.ZONE_SIZE)
+        zy = int(y // self.ZONE_SIZE)
+        return f"{zx},{zy}"
+
+    def _compute_congestion(self):
+        """Recompute per-zone congestion from current traffic agent positions."""
+        counts: dict[str, int] = {}
+        for t in self.traffic_agents:
+            key = self._zone_key(t.x, t.y)
+            counts[key] = counts.get(key, 0) + 1
+        # ≥10 traffic agents in a zone → 100% congestion
+        self.zone_congestion = {k: min(1.0, v / 10.0) for k, v in counts.items()}
+
+    def get_congestion_for(self, x: float, y: float) -> float:
+        """Return congestion level 0..1 for the zone containing (x, y)."""
+        return self.zone_congestion.get(self._zone_key(x, y), 0.0)
+
+    # ------------------------------------------------------------------
+    # Traffic actuation (called by City Oracle tools)
+    # ------------------------------------------------------------------
+
+    def reroute_traffic_from_zone(self, zone_key: str) -> int:
+        """Force all traffic agents in zone_key to pick a new destination
+        outside that zone.  Simulates rerouting vehicles away from a hotspot.
+        Returns the number of agents rerouted."""
+        zx, zy = (int(v) for v in zone_key.split(","))
+        zone_x_min = zx * self.ZONE_SIZE
+        zone_x_max = zone_x_min + self.ZONE_SIZE
+        zone_y_min = zy * self.ZONE_SIZE
+        zone_y_max = zone_y_min + self.ZONE_SIZE
+        rerouted = 0
+        for t in self.traffic_agents:
+            if zone_x_min <= t.x < zone_x_max and zone_y_min <= t.y < zone_y_max:
+                # Assign destination in a different zone
+                while True:
+                    new_x = random.uniform(0, 100)
+                    new_y = random.uniform(0, 100)
+                    if not (zone_x_min <= new_x < zone_x_max and zone_y_min <= new_y < zone_y_max):
+                        break
+                t.destination_x = new_x
+                t.destination_y = new_y
+                rerouted += 1
+        return rerouted
+
+    def set_zone_speed_limit(self, zone_key: str, multiplier: float):
+        """Set a speed multiplier for all traffic in a zone.
+        multiplier=1.0 → normal speed; 0.3 → heavy throttle (red light phase).
+        Clamp to [0.1, 1.0].  Set to 1.0 to clear any restriction."""
+        multiplier = max(0.1, min(1.0, multiplier))
+        if multiplier >= 1.0:
+            self.zone_speed_limits.pop(zone_key, None)
+        else:
+            self.zone_speed_limits[zone_key] = multiplier
+
+    # ------------------------------------------------------------------
+    # State snapshot
+    # ------------------------------------------------------------------
+
+    def get_state(self):
+        state = super().get_state()
+        state["traffic"] = [
+            {"id": t.id, "x": round(t.x, 2), "y": round(t.y, 2)}
+            for t in self.traffic_agents
+        ]
+        state["zone_congestion"] = self.zone_congestion
+        state["zone_speed_limits"] = self.zone_speed_limits
+        return state
+
+    def get_city_metrics(self) -> dict:
+        """Compact metrics dict consumed by Scout agents and context builders."""
+        active_hubs = [h for h in self.hubs if h.active]
+        total_queue = sum(h.queue_length for h in active_hubs)
+        avg_price = (
+            sum(h.price for h in active_hubs) / len(active_hubs) if active_hubs else 0.0
+        )
+        charging_count = sum(1 for r in self.residents if r.charging)
+        seeking_count = sum(
+            1 for r in self.residents if r.state.value == "seeking"
+        )
+        congestion_values = list(self.zone_congestion.values())
+        avg_congestion = (
+            sum(congestion_values) / len(congestion_values) if congestion_values else 0.0
+        )
+        hotspot = (
+            max(self.zone_congestion, key=self.zone_congestion.get)
+            if self.zone_congestion else "none"
+        )
+        return {
+            "residents": len(self.residents),
+            "traffic_agents": len(self.traffic_agents),
+            "active_hubs": len(active_hubs),
+            "total_queue": total_queue,
+            "avg_price": round(avg_price, 3),
+            "charging_count": charging_count,
+            "seeking_count": seeking_count,
+            "avg_congestion": round(avg_congestion, 3),
+            "congestion_hotspot": hotspot,
+            "weather": self.weather,
+        }
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
+    async def run(self):
+        from database import save_telemetry, save_market_event
+
+        self.running = True
+        tick_counter = 0
+
+        while self.running:
+            tick_counter += 1
+
+            # --- Traffic layer ---
+            for t in self.traffic_agents:
+                # Apply per-zone signal timing multiplier before movement
+                t.speed_multiplier = self.zone_speed_limits.get(
+                    self._zone_key(t.x, t.y), 1.0
+                )
+                t.update()
+            self._compute_congestion()
+
+            # --- EV layer with congestion-aware drain ---
+            residents_by_id = {r.id: r for r in self.residents}
+
+            for hub in self.hubs:
+                if hub.active:
+                    hub.free_completed_slots(residents_by_id)
+                    hub.promote_from_queue()
+
+            for res in self.residents:
+                congestion = self.get_congestion_for(res.x, res.y)
+                drain_boost = congestion * self.CONGESTION_DRAIN_BONUS
+                original_drain = self.global_battery_drain
+                self.global_battery_drain += drain_boost
+                res.update(self.hubs, self)
+                self.global_battery_drain = original_drain
+
+            # --- Hub pricing & metrics ---
+            active_hubs_count = 0
+            total_queue = 0
+            total_price = 0.0
+            for hub in self.hubs:
+                hub.update()
+                if hub.active:
+                    active_hubs_count += 1
+                    total_queue += hub.queue_length
+                    total_price += hub.price
+
+            # --- Continuous city market adaptation ---
+            # Makes hub prices respond in near-real-time to active demand pressure,
+            # not only at the 20-tick event boundary.
+            seeking_count = sum(
+                1 for r in self.residents if getattr(r.state, "value", "") == "seeking"
+            )
+            if active_hubs_count > 0:
+                seeking_per_hub = seeking_count / active_hubs_count
+                for hub in self.hubs:
+                    if not hub.active:
+                        continue
+                    pressure = hub.queue_length + 0.5 * seeking_per_hub
+                    if pressure >= hub.capacity * 0.8:
+                        hub.price += 0.008
+                    elif pressure <= 0.4:
+                        hub.price -= 0.004
+                    hub.price = min(self.MAX_PRICE, max(self.MIN_PRICE, hub.price))
+
+            # Recompute totals after adaptation so telemetry reflects true current prices.
+            total_price = sum(h.price for h in self.hubs if h.active)
+
+            avg_price = total_price / max(1, active_hubs_count)
+
+            # --- Market event loop (every 20 ticks) ---
+            if tick_counter % 20 == 0:
+                if total_queue > active_hubs_count * 2:
+                    for hub in self.hubs:
+                        if hub.active:
+                            hub.price += 0.05
+                            hub.price = min(self.MAX_PRICE, hub.price)
+                    save_market_event(
+                        "city_high_demand_surge",
+                        "City: Queue lengths high — prices surged.",
+                    )
+                elif total_queue == 0:
+                    for hub in self.hubs:
+                        if hub.active and hub.price > self.MIN_PRICE:
+                            hub.price -= 0.02
+                            hub.price = max(self.MIN_PRICE, hub.price)
+                    save_market_event(
+                        "city_low_demand_drop",
+                        "City: Zero queues — prices dropped to attract residents.",
+                    )
+
+            # --- Telemetry (every 10 ticks) ---
+            if tick_counter % 10 == 0:
+                save_telemetry(self.weather, active_hubs_count, avg_price, total_queue)
+
+            # --- Notify Scout / agent subscribers ---
+            if self.agent_subscribers:
+                state = self.get_state()
+                for cb in list(self.agent_subscribers):
+                    try:
+                        await cb(state, tick_counter)
+                    except Exception as exc:
+                        print(f"[CityEngine] agent_subscriber error: {exc}")
+
+            # --- Broadcast to WebSocket subscribers ---
+            state = self.get_state()
+            for sub in list(self.subscribers):
+                await sub(state)
+
+            await asyncio.sleep(0.5)
+
+
+# Global instance — imported by server.py and agent modules
+city_engine = CitySimulationEngine()

@@ -44,6 +44,33 @@ def init_db():
             description TEXT
         )
     ''')
+    # Predictions table — meta-cognition: Oracle logs predictions, resolved later
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            metric TEXT NOT NULL,
+            prediction_text TEXT NOT NULL,
+            predicted_value REAL,
+            target_tick INTEGER,
+            actual_value REAL,
+            error_delta REAL,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT
+        )
+    ''')
+    # Agent decisions table — Chief Oracle logs actuation decisions
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS agent_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_name TEXT NOT NULL,
+            decision_type TEXT NOT NULL,
+            description TEXT NOT NULL,
+            confidence REAL DEFAULT 1.0,
+            tick INTEGER,
+            created_at TEXT NOT NULL
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -149,3 +176,152 @@ def load_telemetry(limit: int = 50) -> dict:
 
     conn.close()
     return {"telemetry": telemetry, "events": events}
+
+
+# ---------------------------------------------------------------------------
+# Predictions (meta-cognition)
+# ---------------------------------------------------------------------------
+
+def save_prediction(
+    metric: str,
+    prediction_text: str,
+    predicted_value: float,
+    target_tick: int,
+    session_id: str = None,
+) -> int:
+    """Log a new Oracle prediction; return its row id."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        INSERT INTO predictions (session_id, metric, prediction_text, predicted_value, target_tick, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''',
+        (session_id, metric, prediction_text, predicted_value, target_tick, datetime.now().isoformat()),
+    )
+    row_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def resolve_prediction(prediction_id: int, actual_value: float):
+    """Record the actual outcome and compute error delta for a prediction."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT predicted_value FROM predictions WHERE id = ?', (prediction_id,)
+    )
+    row = cursor.fetchone()
+    if row:
+        error_delta = actual_value - row["predicted_value"]
+        cursor.execute(
+            '''
+            UPDATE predictions
+            SET actual_value = ?, error_delta = ?, resolved_at = ?
+            WHERE id = ?
+            ''',
+            (actual_value, error_delta, datetime.now().isoformat(), prediction_id),
+        )
+        conn.commit()
+    conn.close()
+
+
+def load_prediction_accuracy(limit: int = 20) -> dict:
+    """Return recent resolved predictions and a mean absolute error summary."""
+    limit = max(1, min(limit, 100))
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT metric, prediction_text, predicted_value, actual_value, error_delta, resolved_at
+        FROM predictions
+        WHERE resolved_at IS NOT NULL
+        ORDER BY id DESC
+        LIMIT ?
+        ''',
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    resolved = [
+        {
+            "metric": r["metric"],
+            "prediction_text": r["prediction_text"],
+            "predicted_value": r["predicted_value"],
+            "actual_value": r["actual_value"],
+            "error_delta": r["error_delta"],
+            "resolved_at": r["resolved_at"],
+        }
+        for r in rows
+    ]
+    if resolved:
+        mae = sum(abs(r["error_delta"]) for r in resolved) / len(resolved)
+    else:
+        mae = None
+    return {"resolved_predictions": resolved, "mean_absolute_error": mae}
+
+
+# ---------------------------------------------------------------------------
+# Agent decisions (Chief Oracle actuation log)
+# ---------------------------------------------------------------------------
+
+def save_agent_decision(
+    agent_name: str,
+    decision_type: str,
+    description: str,
+    confidence: float = 1.0,
+    tick: int = None,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        INSERT INTO agent_decisions (agent_name, decision_type, description, confidence, tick, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''',
+        (agent_name, decision_type, description, confidence, tick, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_recent_decisions(limit: int = 10) -> list[dict]:
+    limit = max(1, min(limit, 50))
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT agent_name, decision_type, description, confidence, tick, created_at
+        FROM agent_decisions
+        ORDER BY id DESC
+        LIMIT ?
+        ''',
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "agent": r["agent_name"],
+            "type": r["decision_type"],
+            "description": r["description"],
+            "confidence": r["confidence"],
+            "tick": r["tick"],
+            "at": r["created_at"],
+        }
+        for r in reversed(rows)
+    ]
+
+
+def clear_agent_decisions() -> int:
+    """Delete all decision history rows and return deleted row count."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) AS c FROM agent_decisions')
+    row = cursor.fetchone()
+    count = int(row['c']) if row else 0
+    cursor.execute('DELETE FROM agent_decisions')
+    conn.commit()
+    conn.close()
+    return count
