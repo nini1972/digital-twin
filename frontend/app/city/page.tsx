@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Bot, User, Send, Loader2, Activity, Zap, Car, Radio } from 'lucide-react';
+import CityScenarioLab from '@/components/city-scenario-lab';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -530,6 +531,8 @@ export default function CityTwinPage() {
               </div>
             </div>
           </div>
+
+          <CityScenarioLab apiBase={API_BASE} />
 
           {/* EV Tracker */}
           <div className="p-6 rounded-[2rem] border border-cyan-500/10 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl flex flex-col gap-3">
