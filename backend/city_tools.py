@@ -627,40 +627,113 @@ def _run_projection(city_engine, state: dict, horizon_ticks: int, runs: int) -> 
     min_price = getattr(city_engine, "MIN_PRICE", 0.10)
     max_price = getattr(city_engine, "MAX_PRICE", 0.80)
     outcomes = []
+    runs_trajectories = []
+    
     for _ in range(runs):
         simulation = copy.deepcopy(state)
         hubs = simulation.get("hubs", [])
         residents = simulation.get("residents", [])
-        traffic = simulation.get("traffic", [])
         weather = str(simulation.get("weather", "sunny"))
-        weather_multiplier = {"sunny": 1.0, "storm": 1.3, "extreme_heat": 1.45}.get(weather, 1.0)
+        
+        # Weather affects both drain rate (more seeking) and charging speed
+        weather_drain_mult = {"sunny": 1.0, "storm": 1.3, "extreme_heat": 1.45}.get(weather, 1.0)
+        weather_charge_mult = {"sunny": 1.0, "storm": 0.6, "extreme_heat": 0.8}.get(weather, 1.0)
+        
+        trajectory = []
         for _tick in range(horizon_ticks):
             active_hubs = [hub for hub in hubs if hub.get("active", True)]
             if not active_hubs:
-                break
+                trajectory.append(_state_metrics(simulation))
+                continue
+                
             avg_congestion = _state_avg_congestion(simulation)
-            seeking = sum(1 for resident in residents if str(resident.get("state", "")) == "seeking")
-            waiting = sum(1 for resident in residents if str(resident.get("state", "")) == "waiting")
-            demand_pressure = (seeking + 0.7 * waiting + 0.02 * len(traffic)) * weather_multiplier
-            service_capacity = len(active_hubs) * (0.85 - 0.25 * avg_congestion)
-            stochastic = random.uniform(-0.35, 0.35)
-            delta_queue = max(-2.0, demand_pressure - service_capacity + stochastic)
-            per_hub_delta = delta_queue / max(1, len(active_hubs))
+            
+            # Simple state transition modeling for credibility
+            driving = [r for r in residents if r.get("state") == "driving"]
+            seeking = [r for r in residents if r.get("state") == "seeking"]
+            waiting = [r for r in residents if r.get("state") == "waiting"]
+            charging = [r for r in residents if r.get("state") == "charging"]
+            
+            # 1. Driving -> Seeking (battery drain)
+            new_seeking_rate = 0.05 * weather_drain_mult
+            for r in driving:
+                if random.random() < new_seeking_rate:
+                    r["state"] = "seeking"
+                    
+            # 2. Seeking -> Waiting (arrival rate influenced by congestion)
+            arrival_rate = 0.15 * (1.0 - 0.5 * avg_congestion)
+            for r in seeking:
+                if random.random() < arrival_rate:
+                    r["state"] = "waiting"
+                    
+            # 3. Charging -> Driving (completion rate)
+            completion_rate = 0.20 * weather_charge_mult
+            for r in charging:
+                if random.random() < completion_rate:
+                    r["state"] = "driving"
+                    
+            # 4. Transition Waiting -> Charging based on available slots
+            waiting_now = [r for r in residents if r.get("state") == "waiting"]
+            total_waiting = len(waiting_now)
+            total_charging = len([r for r in residents if r.get("state") == "charging"])
+            total_capacity = sum(int(h.get("capacity", 4)) for h in active_hubs)
+            
+            available_slots = max(0, total_capacity - total_charging)
+            can_start = min(total_waiting, available_slots)
+            
+            for r in waiting_now[:can_start]:
+                r["state"] = "charging"
+                
+            # 5. Distribute remaining queue to hubs and update dynamic prices
+            remaining_waiting = len([r for r in residents if r.get("state") == "waiting"])
+            if remaining_waiting > 0:
+                base_queue = remaining_waiting / len(active_hubs)
+                for hub in active_hubs:
+                    capacity = float(hub.get("capacity", 4))
+                    price_factor = 1.0 + (0.5 - float(hub.get("price", 0.2)))
+                    queue_alloc = base_queue * price_factor
+                    
+                    hub["queue"] = queue_alloc
+                    hub["queue_total"] = queue_alloc
+                    
+                    pressure = queue_alloc / max(1.0, capacity)
+                    new_price = float(hub.get("price", 0.2)) + 0.01 * pressure - 0.005 * (1.0 - pressure)
+                    hub["price"] = _clamp(new_price, min_price, max_price)
+            else:
+                for hub in active_hubs:
+                    hub["queue"] = 0.0
+                    hub["queue_total"] = 0.0
+                    new_price = float(hub.get("price", 0.2)) - 0.005
+                    hub["price"] = _clamp(new_price, min_price, max_price)
 
-            for hub in active_hubs:
-                queue = max(0.0, float(hub.get("queue", 0.0)) + per_hub_delta)
-                hub["queue"] = round(queue, 3)
-                hub["queue_total"] = round(queue, 3)
-                pressure = queue / max(1.0, float(hub.get("capacity", 4)))
-                hub["price"] = _clamp(float(hub.get("price", 0.2)) + 0.008 * pressure - 0.003 * (1.0 - pressure), min_price, max_price)
+            # Update traffic congestion (simple decay + stochastic + throttle)
+            for zone, cong in simulation.get("zone_congestion", {}).items():
+                throttle = simulation.get("zone_speed_limits", {}).get(zone, 1.0)
+                simulation["zone_congestion"][zone] = _clamp(cong * 0.95 * throttle + random.uniform(-0.02, 0.05), 0.0, 1.0)
 
+            trajectory.append(_state_metrics(simulation))
+
+        runs_trajectories.append(trajectory)
         outcomes.append(_state_metrics(simulation))
+
+    # Compute average trajectory across runs
+    avg_trajectory = []
+    if runs_trajectories and horizon_ticks > 0:
+        for tick in range(horizon_ticks):
+            tick_metrics = [runs_trajectories[run][tick] for run in range(runs)]
+            avg_trajectory.append({
+                "total_queue": round(sum(m["total_queue"] for m in tick_metrics) / runs, 3),
+                "avg_price": round(sum(m["avg_price"] for m in tick_metrics) / runs, 3),
+                "avg_congestion": round(sum(m["avg_congestion"] for m in tick_metrics) / runs, 3),
+                "active_hubs": round(sum(m["active_hubs"] for m in tick_metrics) / runs, 3),
+            })
 
     return {
         "total_queue": round(sum(outcome["total_queue"] for outcome in outcomes) / len(outcomes), 3),
         "avg_price": round(sum(outcome["avg_price"] for outcome in outcomes) / len(outcomes), 3),
         "avg_congestion": round(sum(outcome["avg_congestion"] for outcome in outcomes) / len(outcomes), 3),
         "active_hubs": round(sum(outcome["active_hubs"] for outcome in outcomes) / len(outcomes), 3),
+        "trajectory": avg_trajectory
     }
 
 

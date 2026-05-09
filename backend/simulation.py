@@ -2,6 +2,7 @@ import random
 import asyncio
 from enum import Enum
 from typing import List
+from pathfinding import astar_path
 
 class ResidentState(Enum):
     DRIVING = "driving"
@@ -82,6 +83,7 @@ class ResidentAgent(Agent):
         self.state = ResidentState.DRIVING
         self.current_hub: ChargingHubAgent | None = None
         self.speed = random.uniform(0.5, 2.0)
+        self.path: List[tuple[float, float]] = []
 
     @property
     def charging(self) -> bool:
@@ -93,9 +95,19 @@ class ResidentAgent(Agent):
             self.current_hub.release(self.id)
             self.current_hub = None
 
-    def _pick_new_destination(self):
+    def _pick_new_destination(self, engine):
         self.destination_x = random.uniform(0, 100)
         self.destination_y = random.uniform(0, 100)
+        self._compute_path(engine, self.destination_x, self.destination_y)
+
+    def _compute_path(self, engine, target_x, target_y):
+        def cost_fn(a, b):
+            base_cost = 10.0
+            if hasattr(engine, 'get_congestion_for'):
+                congestion = engine.get_congestion_for(b[0], b[1])
+                return base_cost * (1.0 + congestion * 5.0)
+            return base_cost
+        self.path = astar_path((self.x, self.y), (target_x, target_y), cost_fn)
 
     def update(self, hubs: List[ChargingHubAgent], engine):
         weather = engine.weather
@@ -106,7 +118,7 @@ class ResidentAgent(Agent):
             if self.battery >= 100:
                 self._leave_hub()
                 self.state = ResidentState.DRIVING
-                self._pick_new_destination()
+                self._pick_new_destination(engine)
             return
 
         # --- WAITING state: resident is at hub but waiting for a free slot ---
@@ -117,6 +129,7 @@ class ResidentAgent(Agent):
                 # Hub is unavailable while we are waiting; leave its queue and re-seek.
                 self._leave_hub()
                 self.state = ResidentState.SEEKING
+                self.path = [] # Clear path to force re-seek
             elif self.id in hub.charging_slots:
                 # Hub promoted us into a slot
                 self.state = ResidentState.CHARGING
@@ -127,16 +140,27 @@ class ResidentAgent(Agent):
         # --- DRIVING / SEEKING: drain battery and move ---
         self.battery = max(0, self.battery - engine.global_battery_drain)
 
-        dx = self.destination_x - self.x
-        dy = self.destination_y - self.y
-        dist = (dx**2 + dy**2)**0.5
-
-        if dist > 1:
-            self.x += (dx / dist) * self.speed
-            self.y += (dy / dist) * self.speed
-        else:
+        if not self.path:
             if self.state == ResidentState.DRIVING:
-                self._pick_new_destination()
+                self._pick_new_destination(engine)
+            elif self.state == ResidentState.SEEKING:
+                self._compute_path(engine, self.destination_x, self.destination_y)
+
+        if self.path:
+            next_waypoint = self.path[0]
+            dx = next_waypoint[0] - self.x
+            dy = next_waypoint[1] - self.y
+            dist = (dx**2 + dy**2)**0.5
+
+            if dist > self.speed:
+                self.x += (dx / dist) * self.speed
+                self.y += (dy / dist) * self.speed
+            else:
+                self.x = next_waypoint[0]
+                self.y = next_waypoint[1]
+                self.path.pop(0)
+                if not self.path and self.state == ResidentState.DRIVING:
+                    self._pick_new_destination(engine)
 
         # Determine battery threshold and search radius multiplier based on weather
         if weather in ("storm", "extreme_heat"):
@@ -147,7 +171,7 @@ class ResidentAgent(Agent):
             radius_multiplier = 1.0
 
         # Seek charge if battery is below threshold
-        if self.battery < seek_threshold:
+        if self.battery < seek_threshold and self.state == ResidentState.DRIVING:
             active_hubs = [h for h in hubs if h.active]
             if active_hubs:
                 # Score hubs by weighted distance + price
@@ -159,13 +183,17 @@ class ResidentAgent(Agent):
                 self.state = ResidentState.SEEKING
                 self.destination_x = target.x
                 self.destination_y = target.y
+                self._compute_path(engine, target.x, target.y)
 
-                # Arrival radius scales with weather: base radius = sqrt(4) ≈ 2 grid units.
-                # In storm/extreme_heat the multiplier is 2.0, so the squared threshold
-                # becomes 4 * 2² = 16, meaning sqrt(16) = 4 grid units — 2× the base distance.
-                arrival_radius = 4 * (radius_multiplier ** 2)
-                if (target.x - self.x)**2 + (target.y - self.y)**2 < arrival_radius:
-                    # Arrived — join the hub queue
+        if self.state == ResidentState.SEEKING:
+            # Re-evaluate arrival logic
+            arrival_radius = 4 * (radius_multiplier ** 2)
+            if (self.destination_x - self.x)**2 + (self.destination_y - self.y)**2 < arrival_radius:
+                # Arrived — join the hub queue
+                active_hubs = [h for h in hubs if h.active]
+                # Find the hub we arrived at (closest one to destination_x, destination_y)
+                if active_hubs:
+                    target = min(active_hubs, key=lambda h: (h.x - self.destination_x)**2 + (h.y - self.destination_y)**2)
                     self.current_hub = target
                     target.enqueue(self.id)
                     self.state = ResidentState.WAITING

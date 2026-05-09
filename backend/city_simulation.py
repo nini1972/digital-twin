@@ -11,6 +11,7 @@ import asyncio
 from typing import List, Callable
 
 from simulation import SimulationEngine, ResidentAgent, ChargingHubAgent
+from pathfinding import astar_path
 
 
 class TrafficFlowAgent:
@@ -25,18 +26,40 @@ class TrafficFlowAgent:
         self.speed_multiplier: float = 1.0  # Modified by zone signal timing
         self.destination_x = random.uniform(0, 100)
         self.destination_y = random.uniform(0, 100)
+        self.path: List[tuple[float, float]] = []
 
-    def update(self):
-        dx = self.destination_x - self.x
-        dy = self.destination_y - self.y
+    def _pick_new_destination(self, engine):
+        self.destination_x = random.uniform(0, 100)
+        self.destination_y = random.uniform(0, 100)
+        self._compute_path(engine)
+
+    def _compute_path(self, engine):
+        def cost_fn(a, b):
+            base_cost = 10.0
+            congestion = engine.get_congestion_for(b[0], b[1])
+            return base_cost * (1.0 + congestion * 5.0)
+        self.path = astar_path((self.x, self.y), (self.destination_x, self.destination_y), cost_fn)
+
+    def update(self, engine):
+        if not self.path:
+            self._pick_new_destination(engine)
+
+        next_waypoint = self.path[0]
+        dx = next_waypoint[0] - self.x
+        dy = next_waypoint[1] - self.y
         dist = (dx ** 2 + dy ** 2) ** 0.5
-        if dist > 1:
-            effective_speed = self.speed * self.speed_multiplier
+        
+        effective_speed = self.speed * self.speed_multiplier
+
+        if dist > effective_speed:
             self.x += (dx / dist) * effective_speed
             self.y += (dy / dist) * effective_speed
         else:
-            self.destination_x = random.uniform(0, 100)
-            self.destination_y = random.uniform(0, 100)
+            self.x = next_waypoint[0]
+            self.y = next_waypoint[1]
+            self.path.pop(0)
+            if not self.path:
+                self._pick_new_destination(engine)
 
 
 class CitySimulationEngine(SimulationEngine):
@@ -189,7 +212,7 @@ class CitySimulationEngine(SimulationEngine):
                 t.speed_multiplier = self.zone_speed_limits.get(
                     self._zone_key(t.x, t.y), 1.0
                 )
-                t.update()
+                t.update(self)
             self._compute_congestion()
 
             # --- EV layer with congestion-aware drain ---

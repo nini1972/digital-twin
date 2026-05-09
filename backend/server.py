@@ -1005,6 +1005,34 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                     "required": ["code"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "simulate_scenario",
+                "description": "Run a fast-forward projection simulation to evaluate 'What-If' scenarios without affecting the live city state. Use this to predict the impact of policy changes before applying them.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "scenario_actions": {
+                            "type": "array",
+                            "description": "List of actions to apply in the scenario (e.g., [{'type': 'set_hub_price', 'hub_id': 'hub_0', 'price': 0.4}]).",
+                            "items": {
+                                "type": "object"
+                            }
+                        },
+                        "horizon_ticks": {
+                            "type": "integer",
+                            "description": "Number of simulation ticks to project into the future. Default is 30."
+                        },
+                        "runs": {
+                            "type": "integer",
+                            "description": "Number of Monte Carlo simulation runs to average. Default is 3."
+                        }
+                    },
+                    "required": ["scenario_actions"]
+                }
+            }
         }
     ]
 
@@ -1127,6 +1155,12 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                         finally:
                             sys.stdout = old_stdout
                         print("Oracle executed python code.")
+                elif function_name == "simulate_scenario":
+                    scenario_actions = function_args.get("scenario_actions", [])
+                    horizon_ticks = function_args.get("horizon_ticks", 30)
+                    runs = function_args.get("runs", 3)
+                    result_body = simulate_scenario(scenario_actions, horizon_ticks, runs)
+                    print(f"Oracle executed tool: Simulate scenario with {len(scenario_actions)} actions over {horizon_ticks} ticks.")
                 else:
                     result_body = {"status": "error", "message": "Unknown tool."}
 

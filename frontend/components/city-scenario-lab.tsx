@@ -22,6 +22,8 @@ type ScenarioRunResult = {
   applied_actions?: Array<Record<string, unknown>>;
   validation_errors?: string[];
   safety?: { mutates_live_state?: boolean };
+  baseline?: { trajectory?: any[] };
+  scenario?: { trajectory?: any[] };
 };
 
 type Props = {
@@ -35,6 +37,40 @@ const DEFAULT_ACTIONS = [
 
 function formatActionLabel(actionType: string) {
   return actionType.replace(/_/g, ' ');
+}
+
+function TrajectoryChart({ baseline, scenario, metric, color, label }: { baseline: any[]; scenario: any[]; metric: string; color: string; label: string }) {
+  if (!baseline?.length || !scenario?.length) return null;
+  const values = [...baseline, ...scenario].map(d => d[metric] as number);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const w = 260;
+  const h = 40;
+  
+  const getPts = (data: any[]) => data.map((d, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - ((d[metric] - min) / range) * h;
+    return `${x},${y}`;
+  }).join(" ");
+
+  return (
+    <div className="mt-4">
+      <div className="flex justify-between items-center mb-1">
+        <p className="text-xs text-slate-500">{label}</p>
+        <div className="flex gap-2 text-[10px]">
+           <span className="text-slate-500 flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-slate-600"/> Baseline</span>
+           <span className="text-emerald-300 flex items-center gap-1"><div className="w-2 h-2 rounded-full" style={{backgroundColor: color}}/> Scenario</span>
+        </div>
+      </div>
+      <div className="relative">
+        <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="overflow-visible">
+          <polyline points={getPts(baseline)} fill="none" stroke="#475569" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" strokeDasharray="4 4" />
+          <polyline points={getPts(scenario)} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+    </div>
+  );
 }
 
 export default function CityScenarioLab({ apiBase }: Props) {
@@ -281,6 +317,16 @@ export default function CityScenarioLab({ apiBase }: Props) {
                 </div>
               ))}
             </div>
+            
+            {result.baseline?.trajectory && result.scenario?.trajectory && (
+              <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3">
+                 <p className="mb-2 text-xs text-slate-400">Projection Trajectories</p>
+                 <TrajectoryChart baseline={result.baseline.trajectory} scenario={result.scenario.trajectory} metric="total_queue" color="#60a5fa" label="Total Queue Length" />
+                 <TrajectoryChart baseline={result.baseline.trajectory} scenario={result.scenario.trajectory} metric="avg_price" color="#f472b6" label="Avg Price ($/kWh)" />
+                 <TrajectoryChart baseline={result.baseline.trajectory} scenario={result.scenario.trajectory} metric="avg_congestion" color="#fbbf24" label="Avg Congestion" />
+              </div>
+            )}
+            
             <div className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-3 text-xs text-slate-300">
               <p className="mb-2 text-slate-500">Applied Actions</p>
               <div className="space-y-2">
