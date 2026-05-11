@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Send, Bot, User, Loader2 } from "lucide-react";
 
-type Resident = { id: string; x: number; y: number; battery: number; charging: boolean; state: string };
+type Resident = { id: string; x: number; y: number; battery: number; battery_raw: number; battery_capacity: number; vehicle_type: string; charging: boolean; state: string };
 type Hub = { id: string; x: number; y: number; price: number; queue: number; slots_used: number; active: boolean };
 type SimState = { residents: Resident[]; hubs: Hub[]; weather?: string };
 type TelemetryPoint = { timestamp: string; avg_price: number; total_queue: number };
@@ -259,23 +259,32 @@ export default function SimulationPage() {
                 return (
                   <g key={res.id} className={`transition-all duration-[500ms] ease-linear ${glowClass}`} transform={`translate(${res.x}, ${res.y})`}>
                     
-                    {/* The Car / Agent */}
-                    <circle r={res.charging ? "1.5" : "0.8"} fill={baseColor} />
-                    
-                    {/* Battery indicator ring */}
-                    <g transform="rotate(-90)">
-                      <circle r="2.5" fill="none" className="stroke-white/5 stroke-[0.4]" />
-                      <circle 
-                        r="2.5" 
-                        fill="none" 
-                        stroke={baseColor}
-                        strokeDasharray={`${(res.battery / 100) * (2 * Math.PI * 2.5)} 100`}
-                        className="stroke-[0.5] transition-all duration-300" 
-                      />
-                    </g>
+                    {/* Invisible hit area for easier hovering */}
+                    <circle r="4.5" fill="transparent" className="cursor-pointer" />
 
-                    {/* Agent ID on hover */}
-                    <text y="-4" className="text-[1.5px] fill-white/50 font-mono opacity-0 group-hover:opacity-100 transition-opacity" textAnchor="middle">{res.id}</text>
+                    {/* Scale base size and ring according to vehicle type */}
+                    {(() => {
+                      const baseR = res.vehicle_type === 'truck' ? 1.6 : res.vehicle_type === 'suv' ? 1.2 : 0.8;
+                      const ringR = baseR + 1.5;
+                      return (
+                        <>
+                          <circle r={res.charging ? baseR + 0.4 : baseR} fill={baseColor} />
+                          <g transform="rotate(-90)">
+                            <circle r={ringR} fill="none" className="stroke-white/5 stroke-[0.4]" />
+                            <circle r={ringR} fill="none" stroke={baseColor}
+                              strokeDasharray={`${(res.battery / 100) * (2 * Math.PI * ringR)} 100`}
+                              className="stroke-[0.5] transition-all duration-300" />
+                          </g>
+                        </>
+                      );
+                    })()}
+
+                    {/* Agent ID and Info on hover */}
+                    <g className="opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none">
+                      <rect x="-8" y="-12" width="16" height="7.5" rx="1.5" fill="#1e1e2d" className="drop-shadow-2xl" />
+                      <text y="-8.5" className="text-[1.8px] fill-white/90 font-mono font-bold" textAnchor="middle">{res.id} ({res.vehicle_type})</text>
+                      <text y="-6" className="text-[1.4px] fill-slate-300 font-mono" textAnchor="middle">{res.battery_raw?.toFixed(1)} / {res.battery_capacity} kWh</text>
+                    </g>
                   </g>
                 );
               })}

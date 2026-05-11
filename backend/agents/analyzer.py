@@ -30,6 +30,8 @@ class DemandAnalyzerAgent:
     # A pattern fires when ≥N of the last WINDOW_SIZE events are of this type
     SATURATION_THRESHOLD = 3
     DEMAND_BURST_THRESHOLD = 2
+    DEGRADED_FLEET_THRESHOLD = 2
+    THERMAL_THROTTLING_THRESHOLD = 2
 
     def __init__(self):
         self.name = "DemandAnalyzerAgent"
@@ -88,6 +90,44 @@ class DemandAnalyzerAgent:
             }
             self.latest_finding = finding
             vector_memory.store("demand_burst", text, {"max_seeking": max_seeking})
+
+        degraded_events = [e for e in self._window if e.get("event") == "degraded_fleet"]
+        if len(degraded_events) >= self.DEGRADED_FLEET_THRESHOLD:
+            low_soh_count = max(e.get("low_soh_count", 0) for e in degraded_events)
+            text = (
+                f"[{datetime.now().isoformat()}] Degraded fleet pattern confirmed. "
+                f"{len(degraded_events)} events in last {WINDOW_SIZE} ticks. "
+                f"Up to {low_soh_count} EVs have severe battery degradation (SOH < 90%)."
+            )
+            finding = {
+                "type": "degraded_fleet_pattern",
+                "event_count": len(degraded_events),
+                "low_soh_count": low_soh_count,
+                "text": text,
+                "ts": datetime.now().isoformat(),
+            }
+            self.latest_finding = finding
+            vector_memory.store("degraded_fleet", text, {"low_soh_count": low_soh_count})
+
+        thermal_events = [e for e in self._window if e.get("event") == "thermal_throttling"]
+        if len(thermal_events) >= self.THERMAL_THROTTLING_THRESHOLD:
+            weather = thermal_events[-1].get("weather", "extreme")
+            affected = max(e.get("affected_count", 0) for e in thermal_events)
+            text = (
+                f"[{datetime.now().isoformat()}] Thermal throttling pattern confirmed. "
+                f"{len(thermal_events)} events in last {WINDOW_SIZE} ticks. "
+                f"Weather ({weather}) is limiting charging rates for up to {affected} EVs."
+            )
+            finding = {
+                "type": "thermal_throttling_pattern",
+                "event_count": len(thermal_events),
+                "weather": weather,
+                "affected_count": affected,
+                "text": text,
+                "ts": datetime.now().isoformat(),
+            }
+            self.latest_finding = finding
+            vector_memory.store("thermal_throttling", text, {"weather": weather})
 
 
 class CongestionAnalyzerAgent:

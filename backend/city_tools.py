@@ -114,7 +114,7 @@ def forecast_city_load(city_engine, horizon_ticks: int = 30) -> dict:
     avg_price = float(metrics.get("avg_price", 0.20))
     weather = str(metrics.get("weather", "sunny"))
 
-    weather_factor = {"sunny": 1.0, "storm": 1.35, "extreme_heat": 1.5}.get(weather, 1.1)
+    weather_factor = {"sunny": 1.0, "storm": 1.35, "extreme_heat": 1.5, "winter": 1.2, "snow": 1.4, "rain": 1.1}.get(weather, 1.1)
     horizon_scale = horizon_ticks / 30.0
     pressure = (total_queue + 0.8 * seeking) / active_hubs
     growth = 1.0 + (0.12 * horizon_scale * weather_factor) + (0.35 * avg_congestion)
@@ -172,13 +172,16 @@ def analyze_resident_segments(city_engine) -> dict:
 def evaluate_weather_impact(city_engine, target_weather: str, horizon_ticks: int = 30) -> dict:
     horizon_ticks = max(5, min(120, int(horizon_ticks)))
     weather = (target_weather or "sunny").strip().lower()
-    if weather not in {"sunny", "storm", "extreme_heat"}:
+    if weather not in {"sunny", "storm", "extreme_heat", "winter", "snow", "rain"}:
         weather = "sunny"
 
     profiles = {
         "sunny": {"drain": 0.2, "charge": 5.0},
         "storm": {"drain": 0.5, "charge": 2.0},
         "extreme_heat": {"drain": 0.8, "charge": 4.0},
+        "winter": {"drain": 0.4, "charge": 3.0},
+        "snow": {"drain": 0.6, "charge": 2.5},
+        "rain": {"drain": 0.3, "charge": 4.5},
     }
     baseline = city_engine.get_city_metrics()
     baseline_profile = profiles["sunny"]
@@ -366,8 +369,8 @@ def _normalize_scenario_action(city_engine, raw: dict, index: int) -> tuple[Opti
     normalized = {"type": action_type}
     if action_type == "set_weather":
         weather = str(raw.get("weather", "sunny")).strip().lower()
-        if weather not in {"sunny", "storm", "extreme_heat"}:
-            return None, f"scenario_actions[{index}].weather must be sunny, storm, or extreme_heat"
+        if weather not in {"sunny", "storm", "extreme_heat", "winter", "snow", "rain"}:
+            return None, f"scenario_actions[{index}].weather must be sunny, storm, extreme_heat, winter, snow, or rain"
         normalized["weather"] = weather
     elif action_type in {"add_city_hub", "add_city_resident", "add_city_traffic"}:
         normalized["count"] = int(_clamp(float(raw.get("count", 1)), 1, 20))
@@ -567,7 +570,7 @@ def _apply_scenario_actions(city_engine, state: dict, actions: list[dict]) -> li
         action_type = str(raw.get("type", "")).strip().lower()
         if action_type == "set_weather":
             weather = str(raw.get("weather", "sunny")).strip().lower()
-            if weather in {"sunny", "storm", "extreme_heat"}:
+            if weather in {"sunny", "storm", "extreme_heat", "winter", "snow", "rain"}:
                 state["weather"] = weather
                 applied.append({"type": "set_weather", "weather": weather})
         elif action_type == "add_city_hub":
@@ -636,8 +639,8 @@ def _run_projection(city_engine, state: dict, horizon_ticks: int, runs: int) -> 
         weather = str(simulation.get("weather", "sunny"))
         
         # Weather affects both drain rate (more seeking) and charging speed
-        weather_drain_mult = {"sunny": 1.0, "storm": 1.3, "extreme_heat": 1.45}.get(weather, 1.0)
-        weather_charge_mult = {"sunny": 1.0, "storm": 0.6, "extreme_heat": 0.8}.get(weather, 1.0)
+        weather_drain_mult = {"sunny": 1.0, "storm": 1.3, "extreme_heat": 1.45, "winter": 1.2, "snow": 1.35, "rain": 1.1}.get(weather, 1.0)
+        weather_charge_mult = {"sunny": 1.0, "storm": 0.6, "extreme_heat": 0.8, "winter": 0.7, "snow": 0.5, "rain": 0.9}.get(weather, 1.0)
         
         trajectory = []
         for _tick in range(horizon_ticks):

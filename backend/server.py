@@ -2,6 +2,9 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+class OracleModeRequest(BaseModel):
+    mode: str
 import os
 import sys
 import pathlib
@@ -65,6 +68,7 @@ async def lifespan(app: FastAPI):
     demand_analyzer = DemandAnalyzerAgent()
     congestion_analyzer = CongestionAnalyzerAgent()
     chief = ChiefOracleAgent(
+        city_engine=city_engine,
         demand_analyzer=demand_analyzer,
         congestion_analyzer=congestion_analyzer,
     )
@@ -1304,7 +1308,8 @@ async def city_chat(request: ChatRequest):
             raise HTTPException(status_code=500, detail="OpenAI client is not initialized")
         # Build city-aware messages
         sim_state = city_engine.get_state()
-        system_msg = city_prompt(sim_state)
+        chief_mode = getattr(city_engine, "chief_mode", "advisor")
+        system_msg = city_prompt(sim_state, chief_mode=chief_mode)
         messages = [{"role": "system", "content": system_msg}]
         for msg in conversation[-20:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
@@ -1603,12 +1608,43 @@ async def city_scenario_schema():
 @app.post("/city/scenario/run")
 async def city_scenario_run(request: ScenarioRunRequest):
     """Execute a copy-only scenario projection without routing through City Oracle chat."""
+    from city_tools import simulate_scenario
     return simulate_scenario(
+        city_engine,
         scenario_actions=request.scenario_actions,
         horizon_ticks=request.horizon_ticks,
         runs=request.runs,
     )
 
+@app.get("/city/oracle/mode")
+async def get_city_oracle_mode():
+    """Return the current mode of the Chief Oracle Agent (advisor or autopilot)."""
+    return {"mode": app.state.chief.mode}
+
+@app.post("/city/oracle/mode")
+async def set_city_oracle_mode(request: OracleModeRequest):
+    """Set the mode of the Chief Oracle Agent (advisor or autopilot)."""
+    if request.mode not in ("advisor", "autopilot"):
+        raise HTTPException(status_code=400, detail="Invalid mode. Must be 'advisor' or 'autopilot'.")
+    app.state.chief.set_mode(request.mode)
+    return {"status": "success", "mode": app.state.chief.mode}
+
+@app.get("/city/forecast")
+async def city_forecast_endpoint(horizon: int = 30):
+    """Return load forecasting metrics."""
+    return _forecast_city_load(horizon_ticks=horizon)
+
+@app.get("/city/segments")
+async def city_segments_endpoint():
+    """Return resident segments."""
+    from city_tools import analyze_resident_segments
+    return analyze_resident_segments(city_engine)
+
+@app.get("/city/recommendations")
+async def city_recommendations_endpoint():
+    """Return the recommendations from forecasting the city load."""
+    forecast = _forecast_city_load(horizon_ticks=30)
+    return {"recommendations": forecast.get("recommendations", [])}
 
 @app.websocket("/ws/city")
 async def city_websocket(websocket: WebSocket):

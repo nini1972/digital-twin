@@ -3,6 +3,12 @@ import subprocess
 from typing import Any, Callable
 
 
+def _handle_set_weather(function_args: dict[str, Any], city_engine: Any) -> dict[str, Any]:
+    weather = function_args.get("weather", "sunny")
+    city_engine.weather = weather
+    return {"status": "success", "message": f"City weather set to {weather}."}
+
+
 def _handle_set_hub_active_state(function_args: dict[str, Any], city_engine: Any) -> dict[str, Any]:
     from simulation import ResidentState
 
@@ -73,12 +79,26 @@ def _handle_add_city_hub(city_engine: Any) -> dict[str, Any]:
     return {"status": "success", "message": f"Added hub {new_hub.id}."}
 
 
-def _handle_add_city_traffic(city_engine: Any) -> dict[str, Any]:
+def _handle_add_city_traffic(function_args: dict[str, Any], city_engine: Any) -> dict[str, Any]:
     from city_simulation import TrafficFlowAgent
+    import random
 
-    new_t = TrafficFlowAgent(f"traffic_{len(city_engine.traffic_agents)}")
-    city_engine.traffic_agents.append(new_t)
-    return {"status": "success", "message": f"Added traffic agent {new_t.id}."}
+    count = int(function_args.get("count", 1))
+    zone = function_args.get("zone", "")
+    added = 0
+    for _ in range(count):
+        new_t = TrafficFlowAgent(f"traffic_{len(city_engine.traffic_agents)}")
+        if zone:
+            try:
+                zx, zy = (int(v) for v in zone.split(","))
+                zone_size = getattr(city_engine, "ZONE_SIZE", 20)
+                new_t.x = zx * zone_size + random.uniform(0, zone_size)
+                new_t.y = zy * zone_size + random.uniform(0, zone_size)
+            except Exception:
+                pass
+        city_engine.traffic_agents.append(new_t)
+        added += 1
+    return {"status": "success", "message": f"Added {added} traffic agent(s)."}
 
 
 def _handle_reroute_traffic(function_args: dict[str, Any], city_engine: Any) -> dict[str, Any]:
@@ -191,12 +211,13 @@ def execute_city_tool_call(
     python_executable: str,
 ) -> dict[str, Any]:
     handlers: dict[str, Callable[[], dict[str, Any]]] = {
+        "set_weather": lambda: _handle_set_weather(function_args, city_engine),
         "set_hub_active_state": lambda: _handle_set_hub_active_state(function_args, city_engine),
         "trigger_hub_maintenance": lambda: _handle_trigger_hub_maintenance(city_engine),
         "set_hub_price": lambda: _handle_set_hub_price(function_args, city_engine),
         "add_city_resident": lambda: _handle_add_city_resident(city_engine),
         "add_city_hub": lambda: _handle_add_city_hub(city_engine),
-        "add_city_traffic": lambda: _handle_add_city_traffic(city_engine),
+        "add_city_traffic": lambda: _handle_add_city_traffic(function_args, city_engine),
         "reroute_traffic": lambda: _handle_reroute_traffic(function_args, city_engine),
         "set_signal_timing": lambda: _handle_set_signal_timing(function_args, city_engine),
         "run_python": lambda: _handle_run_python(function_args, city_engine, runner_path, python_executable),

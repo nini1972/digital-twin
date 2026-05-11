@@ -72,6 +72,33 @@ class EVScoutAgent:
                 "ts": datetime.now().isoformat(),
             })
 
+        weather = state.get("weather", "sunny")
+        low_soh_count = sum(1 for r in residents if r.get("soh", 1.0) < 0.9)
+        if len(residents) > 0 and low_soh_count / len(residents) >= 0.3:
+            last = self._last_saturation_tick.get("degraded_fleet", -20)
+            if tick - last >= 10:
+                self._last_saturation_tick["degraded_fleet"] = tick
+                await bus.publish(CHANNEL_SCOUT_EV, {
+                    "event": "degraded_fleet",
+                    "low_soh_count": low_soh_count,
+                    "tick": tick,
+                    "ts": datetime.now().isoformat(),
+                })
+
+        if weather in ("extreme_cold", "extreme_heat"):
+            charging_count = sum(1 for r in residents if r.get("charging"))
+            if charging_count > 0:
+                last = self._last_saturation_tick.get("thermal", -20)
+                if tick - last >= 10:
+                    self._last_saturation_tick["thermal"] = tick
+                    await bus.publish(CHANNEL_SCOUT_EV, {
+                        "event": "thermal_throttling",
+                        "weather": weather,
+                        "affected_count": charging_count,
+                        "tick": tick,
+                        "ts": datetime.now().isoformat(),
+                    })
+
 
 class TrafficScoutAgent:
     """Monitors zone congestion and publishes traffic events."""

@@ -77,13 +77,34 @@ class ChargingHubAgent(Agent):
 class ResidentAgent(Agent):
     def __init__(self, agent_id: str):
         super().__init__(agent_id, "resident")
-        self.battery = random.uniform(20, 100)
+        self.vehicle_type = random.choice(["sedan", "suv", "truck"])
+        if self.vehicle_type == "sedan":
+            self.base_capacity = 60.0
+            self.efficiency = 0.15  # kWh per unit distance
+        elif self.vehicle_type == "suv":
+            self.base_capacity = 85.0
+            self.efficiency = 0.25
+        else:
+            self.base_capacity = 120.0
+            self.efficiency = 0.35
+
+        # Battery Degradation (State of Health)
+        self.state_of_health = random.uniform(0.85, 1.0)
+        self.battery_capacity = self.base_capacity * self.state_of_health
+
+        self.battery = random.uniform(20, self.battery_capacity)
         self.destination_x = random.uniform(0, 100)
         self.destination_y = random.uniform(0, 100)
         self.state = ResidentState.DRIVING
         self.current_hub: ChargingHubAgent | None = None
-        self.speed = random.uniform(0.5, 2.0)
+        self.base_speed = random.uniform(0.5, 2.0)
+        self.speed = self.base_speed
         self.path: List[tuple[float, float]] = []
+        
+        self.current_aero_drag = 0.0
+        self.current_regen_efficiency = 0.4
+        self.battery_temperature = random.uniform(15.0, 25.0)
+        self.payload_weight = random.uniform(50.0, 300.0)
 
     @property
     def charging(self) -> bool:
@@ -112,10 +133,53 @@ class ResidentAgent(Agent):
     def update(self, hubs: List[ChargingHubAgent], engine):
         weather = engine.weather
 
+        # Get congestion (default 0 if basic engine)
+        congestion = 0.0
+        if hasattr(engine, 'get_congestion_for'):
+            congestion = engine.get_congestion_for(self.x, self.y)
+
+        # Base HVAC drain (idle drain)
+        hvac_drain = 0.05
+        ambient_temp = 20.0
+        if weather == "extreme_cold":
+            hvac_drain = 0.15
+            ambient_temp = -5.0
+        elif weather == "extreme_heat":
+            hvac_drain = 0.15
+            ambient_temp = 35.0
+        elif weather == "storm":
+            ambient_temp = 10.0
+
+        # Thermal dynamics (slowly adjust to ambient)
+        self.battery_temperature += (ambient_temp - self.battery_temperature) * 0.05
+
+        if self.state in (ResidentState.CHARGING, ResidentState.WAITING):
+            self.speed = 0.0
+            self.current_aero_drag = 0.0
+
         # --- CHARGING state: resident is in a slot, actively charging ---
         if self.state == ResidentState.CHARGING:
-            self.battery = min(100, self.battery + engine.global_charging_speed)
-            if self.battery >= 100:
+            # Advanced Physics: Non-linear charging curve & temperature effects
+            soc = self.battery / self.battery_capacity
+            charge_rate = engine.global_charging_speed
+            
+            # Tapering (DC Fast Charging curve)
+            if soc > 0.95:
+                charge_rate *= 0.2
+            elif soc > 0.80:
+                charge_rate *= 0.5
+            
+            # Weather impacts on charging (Coldgate & Thermal Throttling)
+            if weather == "extreme_cold":
+                charge_rate *= 0.6
+            elif weather == "extreme_heat":
+                charge_rate *= 0.8
+            
+            # Charging heats up the battery
+            self.battery_temperature += 0.5
+
+            self.battery = min(self.battery_capacity, self.battery + charge_rate)
+            if self.battery >= self.battery_capacity:
                 self._leave_hub()
                 self.state = ResidentState.DRIVING
                 self._pick_new_destination(engine)
@@ -123,6 +187,7 @@ class ResidentAgent(Agent):
 
         # --- WAITING state: resident is at hub but waiting for a free slot ---
         if self.state == ResidentState.WAITING:
+            self.battery = max(0, self.battery - hvac_drain)
             hub = self.current_hub
 
             if hub is None or getattr(hub, "active", True) is False:
@@ -137,15 +202,21 @@ class ResidentAgent(Agent):
             else:
                 return
 
-        # --- DRIVING / SEEKING: drain battery and move ---
-        self.battery = max(0, self.battery - engine.global_battery_drain)
-
+        # --- DRIVING / SEEKING: move and drain battery ---
         if not self.path:
             if self.state == ResidentState.DRIVING:
                 self._pick_new_destination(engine)
             elif self.state == ResidentState.SEEKING:
                 self._compute_path(engine, self.destination_x, self.destination_y)
 
+        # Dynamic speed calculation based on congestion and randomness
+        if self.state in (ResidentState.DRIVING, ResidentState.SEEKING):
+            speed_variance = random.uniform(0.85, 1.15)
+            # Speed is reduced by congestion (max 80% reduction)
+            congestion_factor = max(0.2, 1.0 - (congestion * 0.8))
+            self.speed = self.base_speed * speed_variance * congestion_factor
+
+        distance_moved = 0.0
         if self.path:
             next_waypoint = self.path[0]
             dx = next_waypoint[0] - self.x
@@ -153,14 +224,39 @@ class ResidentAgent(Agent):
             dist = (dx**2 + dy**2)**0.5
 
             if dist > self.speed:
+                distance_moved = self.speed
                 self.x += (dx / dist) * self.speed
                 self.y += (dy / dist) * self.speed
             else:
+                distance_moved = dist
                 self.x = next_waypoint[0]
                 self.y = next_waypoint[1]
                 self.path.pop(0)
                 if not self.path and self.state == ResidentState.DRIVING:
                     self._pick_new_destination(engine)
+
+        # Advanced Physics: Aerodynamic drag and Regenerative Braking
+        # Drag increases squarely with speed
+        self.current_aero_drag = (self.speed ** 2) * 0.02
+        
+        # Driving heats up the battery
+        self.battery_temperature += (self.speed * 0.1)
+        
+        # Payload penalty based on weight
+        payload_penalty = (self.payload_weight / 1000.0) * 0.05 * distance_moved
+        
+        # Base drain: efficiency * distance + aero_drag + payload penalty
+        base_driving_drain = distance_moved * self.efficiency + self.current_aero_drag + payload_penalty
+        
+        # Congestion penalty mitigated by regen braking (stop-and-go recoups energy)
+        self.current_regen_efficiency = 0.4
+        congestion_penalty = (congestion * 0.5) * (1.0 - self.current_regen_efficiency)
+        
+        driving_drain = base_driving_drain * (1.0 + congestion_penalty)
+        self.battery = max(0, self.battery - (hvac_drain + driving_drain))
+
+        # Recompute percentage for threshold checks
+        battery_percentage = (self.battery / self.battery_capacity) * 100
 
         # Determine battery threshold and search radius multiplier based on weather
         if weather in ("storm", "extreme_heat"):
@@ -170,14 +266,15 @@ class ResidentAgent(Agent):
             seek_threshold = 30
             radius_multiplier = 1.0
 
-        # Seek charge if battery is below threshold
-        if self.battery < seek_threshold and self.state == ResidentState.DRIVING:
+        # Seek charge if battery percentage is below threshold
+        if battery_percentage < seek_threshold and self.state == ResidentState.DRIVING:
             active_hubs = [h for h in hubs if h.active]
             if active_hubs:
-                # Score hubs by weighted distance + price
+                # Score hubs by weighted distance, price, and waiting list (queue length)
                 def hub_score(h):
-                    dist_sq = (h.x - self.x)**2 + (h.y - self.y)**2
-                    return engine.distance_weight * dist_sq + engine.price_weight * h.price
+                    dist = ((h.x - self.x)**2 + (h.y - self.y)**2)**0.5
+                    queue_penalty = getattr(engine, 'wait_weight', 15.0) * h.queue_length
+                    return engine.distance_weight * dist + engine.price_weight * h.price + queue_penalty
 
                 target = min(active_hubs, key=hub_score)
                 self.state = ResidentState.SEEKING
@@ -209,6 +306,7 @@ class SimulationEngine:
         # Hub-selection weights (Oracle can tune these)
         self.distance_weight = 1.0
         self.price_weight = 50.0
+        self.wait_weight = 15.0
 
         # Initialize the city with 20 residents and 3 charging hubs
         self.residents = [ResidentAgent(f"res_{i}") for i in range(20)]
@@ -223,7 +321,15 @@ class SimulationEngine:
                     "id": r.id,
                     "x": r.x,
                     "y": r.y,
-                    "battery": r.battery,
+                    "battery": (r.battery / r.battery_capacity) * 100.0,
+                    "battery_raw": r.battery,
+                    "battery_capacity": r.battery_capacity,
+                    "soh": r.state_of_health,
+                    "aero_drag": r.current_aero_drag,
+                    "regen_efficiency": r.current_regen_efficiency,
+                    "battery_temperature": r.battery_temperature,
+                    "payload_weight": r.payload_weight,
+                    "vehicle_type": r.vehicle_type,
                     "charging": r.charging,
                     "state": r.state.value,
                 }

@@ -10,6 +10,7 @@ from datetime import datetime
 
 from database import save_agent_decision, load_recent_decisions
 from memory.chroma import vector_memory
+import city_tools
 
 
 # How many ticks between Chief synthesis cycles
@@ -20,13 +21,16 @@ DECISION_REPEAT_COOLDOWN_TICKS = 120
 class ChiefOracleAgent:
     """Rule-based synthesiser that converts Analyzer patterns into decisions."""
 
-    def __init__(self, demand_analyzer=None, congestion_analyzer=None):
+    def __init__(self, city_engine=None, demand_analyzer=None, congestion_analyzer=None):
         self.name = "ChiefOracleAgent"
+        self.city_engine = city_engine
         self.demand_analyzer = demand_analyzer
         self.congestion_analyzer = congestion_analyzer
+        self.mode = "advisor"  # "advisor" or "autopilot"
         self._cycle_count = 0
         self._last_tick = 0
         self._last_decision_ticks: dict[tuple[str, str], int] = {}
+        self._tool_last_executed_at: dict[str, float] = {}
 
     def _emit_decision_once(
         self,
@@ -81,6 +85,17 @@ class ChiefOracleAgent:
                     tick=tick,
                 ):
                     decisions_made += 1
+                    if self.mode == "autopilot" and self.city_engine:
+                        try:
+                            # Automatically invoke optimization when saturated
+                            res = city_tools.optimize_hub_pricing(
+                                self.city_engine, 
+                                self._tool_last_executed_at, 
+                                objective="queue_reduction"
+                            )
+                            print(f"[ChiefOracle] Autopilot executed optimize_hub_pricing: {res}")
+                        except Exception as e:
+                            print(f"[ChiefOracle] Autopilot error in optimize_hub_pricing: {e}")
             elif ftype == "demand_burst_pattern":
                 max_seeking = finding.get("max_seeking", 0)
                 description = (
@@ -91,6 +106,32 @@ class ChiefOracleAgent:
                     decision_type="capacity_expansion",
                     description=description,
                     confidence=0.80,
+                    tick=tick,
+                ):
+                    decisions_made += 1
+            elif ftype == "degraded_fleet_pattern":
+                description = (
+                    f"Significant EV fleet battery degradation detected. "
+                    f"Routing efficiency drops and charging times increase. "
+                    f"Recommend prioritizing battery health preservation routines and building more charging capacity."
+                )
+                if self._emit_decision_once(
+                    decision_type="capacity_expansion",
+                    description=description,
+                    confidence=0.85,
+                    tick=tick,
+                ):
+                    decisions_made += 1
+            elif ftype == "thermal_throttling_pattern":
+                weather = finding.get("weather", "extreme")
+                description = (
+                    f"Charging rates severely limited due to {weather} weather (Thermal Throttling). "
+                    f"Recommend rerouting EVs to indoor/climate-controlled hubs and reducing vehicle speeds."
+                )
+                if self._emit_decision_once(
+                    decision_type="traffic_rerouting",
+                    description=description,
+                    confidence=0.92,
                     tick=tick,
                 ):
                     decisions_made += 1
@@ -112,6 +153,17 @@ class ChiefOracleAgent:
                     tick=tick,
                 ):
                     decisions_made += 1
+                    if self.mode == "autopilot" and self.city_engine:
+                        try:
+                            res = city_tools.rebalance_hub_load(
+                                self.city_engine, 
+                                self._tool_last_executed_at, 
+                                strategy="hybrid", 
+                                zone=zone
+                            )
+                            print(f"[ChiefOracle] Autopilot executed rebalance_hub_load: {res}")
+                        except Exception as e:
+                            print(f"[ChiefOracle] Autopilot error in rebalance_hub_load: {e}")
 
         # --- Semantic recall: query ChromaDB for similar past events ---
         if decisions_made == 0:
@@ -132,3 +184,9 @@ class ChiefOracleAgent:
         """Return the n most recent decisions (for city_context enrichment)."""
         decisions = load_recent_decisions(limit=n)
         return decisions
+
+    def set_mode(self, new_mode: str):
+        """Set Oracle mode (advisor or autopilot)."""
+        if new_mode in ("advisor", "autopilot"):
+            self.mode = new_mode
+            print(f"[ChiefOracle] Mode changed to {self.mode}")

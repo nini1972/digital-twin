@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Bot, User, Send, Loader2, Activity, Zap, Car, Radio } from 'lucide-react';
 import CityScenarioLab from '@/components/city-scenario-lab';
+import PolicyDashboard from '@/components/policy-dashboard';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -10,7 +11,9 @@ import CityScenarioLab from '@/components/city-scenario-lab';
 
 type Resident = {
   id: string; x: number; y: number;
-  battery: number; charging: boolean; state: string;
+  battery: number; battery_raw: number; battery_capacity: number; vehicle_type: string; charging: boolean; state: string;
+  soh: number; aero_drag: number; regen_efficiency: number;
+  battery_temperature: number; payload_weight: number;
 };
 
 type Hub = {
@@ -32,7 +35,7 @@ type CityState = {
 };
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
-type TelemetryRow = { timestamp: string; weather?: string; active_hubs: number; avg_price: number; total_queue: number };
+type TelemetryRow = { timestamp: string; weather?: string; active_hubs: number; avg_price: number; total_queue: number; avg_temp?: number; avg_drag?: number };
 
 type Decision = {
   agent: string; type: string; description: string;
@@ -95,6 +98,11 @@ export default function CityTwinPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetryRow[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [forecast, setForecast] = useState<any>(null);
+  const [segments, setSegments] = useState<any>(null);
+  const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [oracleMode, setOracleMode] = useState<'advisor' | 'autopilot'>('advisor');
+  const [hoveredResidentId, setHoveredResidentId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -103,6 +111,8 @@ export default function CityTwinPage() {
   // --- Derived sparklines ---
   const priceHistory = telemetry.map(t => t.avg_price);
   const queueHistory = telemetry.map(t => t.total_queue);
+  const tempHistory = telemetry.map(t => t.avg_temp ?? 0);
+  const dragHistory = telemetry.map(t => t.avg_drag ?? 0);
 
   // --- WebSocket ---
   useEffect(() => {
@@ -163,6 +173,8 @@ export default function CityTwinPage() {
       active_hubs: activeHubs.length,
       avg_price: Number(avgPrice.toFixed(4)),
       total_queue: totalQueue,
+      avg_temp: cityState.residents.length ? cityState.residents.reduce((sum, r) => sum + (r.battery_temperature || 0), 0) / cityState.residents.length : 0,
+      avg_drag: cityState.residents.length ? cityState.residents.reduce((sum, r) => sum + (r.aero_drag || 0), 0) / cityState.residents.length : 0,
     };
     setTelemetry(prev => [...prev.slice(-119), row]);
   }, [cityState.hubs, cityState.weather]);
@@ -185,8 +197,35 @@ export default function CityTwinPage() {
         }
       } catch { /* ignore */ }
     };
+    const fetchAnalytics = async () => {
+      try {
+        const [fRes, sRes, rRes] = await Promise.all([
+          fetch(`${API_BASE}/city/forecast?horizon=30`),
+          fetch(`${API_BASE}/city/segments`),
+          fetch(`${API_BASE}/city/recommendations`)
+        ]);
+        if (fRes.ok) setForecast(await fRes.json());
+        if (sRes.ok) setSegments(await sRes.json());
+        if (rRes.ok) setRecommendations((await rRes.json()).recommendations || []);
+      } catch { /* ignore */ }
+    };
+    const fetchOracleMode = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/city/oracle/mode`);
+        if (res.ok) {
+          const data = await res.json();
+          setOracleMode(data.mode);
+        }
+      } catch { /* ignore */ }
+    };
     fetchDecisions();
-    const interval = setInterval(fetchDecisions, 8_000);
+    fetchAnalytics();
+    fetchOracleMode();
+    const interval = setInterval(() => {
+      fetchDecisions();
+      fetchAnalytics();
+      fetchOracleMode();
+    }, 8_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -226,6 +265,18 @@ export default function CityTwinPage() {
     } finally {
       setIsChatting(false);
     }
+  };
+
+  const toggleOracleMode = async () => {
+    const newMode = oracleMode === 'advisor' ? 'autopilot' : 'advisor';
+    setOracleMode(newMode);
+    try {
+      await fetch(`${API_BASE}/city/oracle/mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: newMode }),
+      });
+    } catch { /* ignore */ }
   };
 
   // ---------------------------------------------------------------------------
@@ -438,26 +489,58 @@ export default function CityTwinPage() {
               else if (isWaiting) baseColor = '#facc15';
               else if (isCrit) baseColor = '#ef4444';
               return (
-                <g key={res.id} className="transition-all duration-[500ms] ease-linear" transform={`translate(${res.x}, ${res.y})`} opacity={isSelected ? 1 : 0.22}>
-                  {isSelected && selectedResidentId && <circle r="3.4" fill="none" className="stroke-cyan-300/70 stroke-[0.45] animate-pulse" />}
-                  <circle r={res.charging ? '1.5' : '0.8'} fill={baseColor} />
-                  <g transform="rotate(-90)">
-                    <circle r="2.5" fill="none" className="stroke-white/5 stroke-[0.4]" />
-                    <circle r="2.5" fill="none" stroke={baseColor}
-                      strokeDasharray={`${(res.battery / 100) * (2 * Math.PI * 2.5)} 100`}
-                      className="stroke-[0.5] transition-all duration-300" />
-                  </g>
+                <g 
+                  key={res.id} 
+                  className="transition-all duration-[500ms] ease-linear cursor-pointer" 
+                  transform={`translate(${res.x}, ${res.y})`} 
+                  opacity={isSelected ? 1 : 0.22}
+                  onMouseEnter={() => setHoveredResidentId(res.id)}
+                  onMouseLeave={() => setHoveredResidentId(null)}
+                >
+                  {isSelected && selectedResidentId && <circle r="3.4" fill="none" className="stroke-cyan-300/70 stroke-[0.45] animate-pulse pointer-events-none" />}
+                  {/* Invisible hit area for easier hovering */}
+                  <circle r="6" fill="transparent" />
+
+                  {/* Scale base size and ring according to vehicle type */}
+                  {(() => {
+                    const baseR = res.vehicle_type === 'truck' ? 2.5 : res.vehicle_type === 'suv' ? 1.8 : 1.2;
+                    const ringR = baseR + 1.5;
+                    return (
+                      <g className="pointer-events-none">
+                        <circle r={res.charging ? baseR + 0.4 : baseR} fill={baseColor} />
+                        <g transform="rotate(-90)">
+                          <circle r={ringR} fill="none" className="stroke-white/5 stroke-[0.4]" />
+                          <circle r={ringR} fill="none" stroke={baseColor}
+                            strokeDasharray={`${(res.battery / 100) * (2 * Math.PI * ringR)} 100`}
+                            className="stroke-[0.5] transition-all duration-300" />
+                        </g>
+                      </g>
+                    );
+                  })()}
                   {showResidentIds && (
-                    <>
-                      <rect x="1.8" y="-4.5" width="4.8" height="2.8" rx="0.8" fill="rgba(8,8,16,0.85)" />
-                      <text x="4.2" y="-2.6" className="text-[1.7px] fill-cyan-200 font-mono font-bold" textAnchor="middle">
+                    <g className="pointer-events-none">
+                      <rect x="1.8" y="-4.5" width="5.5" height="3" rx="0.8" fill="rgba(8,8,16,0.85)" />
+                      <text x="4.5" y="-2.3" className="text-[1.8px] fill-cyan-200 font-mono font-bold" textAnchor="middle">
                         {residentLabel}
                       </text>
-                    </>
+                    </g>
                   )}
                 </g>
               );
             })}
+
+            {/* Hover Tooltip Rendered On Top */}
+            {hoveredResidentId && (() => {
+              const res = cityState.residents.find(r => r.id === hoveredResidentId);
+              if (!res) return null;
+              return (
+                <g className="pointer-events-none drop-shadow-2xl z-50" transform={`translate(${res.x}, ${res.y})`}>
+                  <rect x="-9" y="-14" width="18" height="8.5" rx="1.5" fill="#1e1e2d" className="stroke-white/10 stroke-[0.3]" />
+                  <text y="-9.5" className="text-[2.0px] fill-white font-mono font-bold" textAnchor="middle">{res.id} ({res.vehicle_type})</text>
+                  <text y="-6.5" className="text-[1.6px] fill-slate-300 font-mono" textAnchor="middle">{res.battery_raw?.toFixed(1)} / {res.battery_capacity} kWh</text>
+                </g>
+              );
+            })()}
           </svg>
 
           {/* City Oracle Chat */}
@@ -569,9 +652,13 @@ export default function CityTwinPage() {
             </div>
             {selectedResident ? (
               <div className="mt-1 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs">
-                <p className="font-mono text-cyan-200 mb-1">EV {selectedResident.id.replace('res_', '')}</p>
+                <p className="font-mono text-cyan-200 mb-1">EV {selectedResident.id.replace('res_', '')} ({selectedResident.vehicle_type})</p>
                 <p className="text-slate-300">State: <span className="text-slate-100 font-medium uppercase">{selectedResident.state}</span></p>
-                <p className="text-slate-300">Battery: <span className="text-slate-100 font-medium">{selectedResident.battery.toFixed(1)}%</span></p>
+                <p className="text-slate-300">Battery: <span className="text-slate-100 font-medium">{selectedResident.battery.toFixed(1)}%</span> <span className="text-slate-500 font-mono">({selectedResident.battery_raw?.toFixed(1)}/{selectedResident.battery_capacity?.toFixed(1)}kWh)</span></p>
+                <p className="text-slate-300">Health (SOH): <span className={`font-medium ${selectedResident.soh > 0.9 ? 'text-green-400' : selectedResident.soh > 0.8 ? 'text-yellow-400' : 'text-red-400'}`}>{(selectedResident.soh * 100).toFixed(1)}%</span></p>
+                <p className="text-slate-300">Physics: <span className="text-slate-100 font-medium">{cityState.weather === 'extreme_cold' ? '❄️ Coldgate Active' : cityState.weather === 'extreme_heat' ? '🔥 Thermal Throttled' : '✅ Nominal'}</span></p>
+                <p className="text-slate-300">Drag/Regen: <span className="text-slate-100 font-medium">{selectedResident.aero_drag?.toFixed(3)} kW / {(selectedResident.regen_efficiency * 100).toFixed(0)}%</span></p>
+                <p className="text-slate-300">Temp/Payload: <span className="text-slate-100 font-medium">{selectedResident.battery_temperature?.toFixed(1)}°C / {selectedResident.payload_weight?.toFixed(0)} kg</span></p>
                 <p className="text-slate-300">Position: <span className="text-slate-100 font-mono">({selectedResident.x.toFixed(1)}, {selectedResident.y.toFixed(1)})</span></p>
               </div>
             ) : normalizedResidentFilter ? (
@@ -600,35 +687,16 @@ export default function CityTwinPage() {
             ))}
           </div>
 
-          {/* Chief Decisions Feed */}
-          <div className="p-6 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl flex flex-col">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-400">Chief Decisions</h2>
-              <span className="flex h-2 w-2 relative">
-                <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-orange-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500" />
-              </span>
-            </div>
-            {decisions.length === 0 ? (
-              <p className="text-xs text-slate-600 italic">Awaiting Chief synthesis…</p>
-            ) : (
-              <div className="space-y-3">
-                {decisions.slice(-4).reverse().map((d, i) => (
-                  <div key={i} className="p-3 rounded-xl border border-white/5 bg-white/[0.02]">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${DECISION_COLORS[d.type] ?? 'bg-slate-500/20 text-slate-300 border-slate-500/30'}`}>
-                        {d.type.replace(/_/g, ' ')}
-                      </span>
-                      {d.confidence != null && (
-                        <span className="text-[10px] text-slate-600 font-mono">{(d.confidence * 100).toFixed(0)}%</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400 leading-relaxed line-clamp-3">{d.description}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Policy Dashboard */}
+          <PolicyDashboard 
+            decisions={decisions} 
+            cityState={cityState} 
+            forecast={forecast}
+            segments={segments}
+            recommendations={recommendations}
+            oracleMode={oracleMode}
+            onToggleMode={toggleOracleMode}
+          />
 
           {/* Hub Markets */}
           <div className="p-6 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl">
@@ -692,6 +760,24 @@ export default function CityTwinPage() {
                   <div className="flex justify-between text-[10px] text-slate-600 mt-0.5 font-mono">
                     <span>{Math.min(...queueHistory)}</span>
                     <span>{Math.max(...queueHistory)}</span>
+                  </div>
+                </div>
+                <div className="h-px w-full bg-gradient-to-r from-white/5 to-transparent" />
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Avg Battery Temp (°C)</p>
+                  <Sparkline values={tempHistory} color="#ef4444" />
+                  <div className="flex justify-between text-[10px] text-slate-600 mt-0.5 font-mono">
+                    <span>{Math.min(...tempHistory).toFixed(1)}</span>
+                    <span>{Math.max(...tempHistory).toFixed(1)}</span>
+                  </div>
+                </div>
+                <div className="h-px w-full bg-gradient-to-r from-white/5 to-transparent" />
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Avg Aero Drag (kW)</p>
+                  <Sparkline values={dragHistory} color="#8b5cf6" />
+                  <div className="flex justify-between text-[10px] text-slate-600 mt-0.5 font-mono">
+                    <span>{Math.min(...dragHistory).toFixed(3)}</span>
+                    <span>{Math.max(...dragHistory).toFixed(3)}</span>
                   </div>
                 </div>
               </div>
