@@ -79,31 +79,27 @@ def main():
     # Copy application sub-packages
     for pkg in _SOURCE_PACKAGES:
         if os.path.isdir(pkg):
-            shutil.copytree(pkg, f"lambda-package/{pkg}")
+            shutil.copytree(pkg, f"lambda-package/{pkg}", dirs_exist_ok=True)
         else:
             print(f"  ⚠ Warning: source package not found: {pkg}/")
 
     # Copy data directory
     if os.path.exists("data"):
-        shutil.copytree("data", "lambda-package/data")
+        shutil.copytree("data", "lambda-package/data", dirs_exist_ok=True)
 
-    # Create zip
+    # Create zip and track unzipped size in a single pass
     print("Creating zip file...")
+    unzipped_bytes = 0
     with zipfile.ZipFile("lambda-deployment.zip", "w", zipfile.ZIP_DEFLATED) as zipf:
         for root, dirs, files in os.walk("lambda-package"):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, "lambda-package")
+                unzipped_bytes += os.path.getsize(file_path)
                 zipf.write(file_path, arcname)
 
     # Show package sizes
     zip_size_mb = os.path.getsize("lambda-deployment.zip") / (1024 * 1024)
-    # Estimate unzipped size from the package directory
-    unzipped_bytes = sum(
-        os.path.getsize(os.path.join(root, f))
-        for root, _, files in os.walk("lambda-package")
-        for f in files
-    )
     unzipped_mb = unzipped_bytes / (1024 * 1024)
     print(f"✓ Created lambda-deployment.zip ({zip_size_mb:.2f} MB zipped, {unzipped_mb:.2f} MB unzipped)")
 
