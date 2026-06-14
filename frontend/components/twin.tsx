@@ -56,7 +56,7 @@ export default function Twin() {
     // Fetch the active financial state from the backend
     const fetchFinanceState = async () => {
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
             const res = await fetch(`${apiUrl}/api/finance/state`);
             if (res.ok) {
                 const data = await res.json();
@@ -70,7 +70,7 @@ export default function Twin() {
     // Reset the financial state back to baseline
     const resetFinanceState = async () => {
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
             const res = await fetch(`${apiUrl}/api/finance/reset`, { method: 'POST' });
             if (res.ok) {
                 await fetchFinanceState();
@@ -196,7 +196,7 @@ export default function Twin() {
         setIsLoading(true);
 
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
             const response = await fetch(`${apiUrl}/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

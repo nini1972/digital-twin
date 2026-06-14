@@ -87,6 +87,8 @@ def _parse_cors_origins() -> list[str]:
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://[::1]:3000",
+        "http://[::1]:3001",
     ]
 
 @asynccontextmanager
@@ -132,10 +134,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Configure CORS
+allowed_origins = _parse_cors_origins()
+print(f"[CORS] Configured CORSMiddleware with origins: {allowed_origins}")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_parse_cors_origins(),
-    allow_credentials=False,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
