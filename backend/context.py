@@ -106,20 +106,20 @@ Whenever you run a financial analysis, highlight critical compliance risks, or p
 Enclose your A2UI JSON payload inside a markdown code block with the language `a2ui` like this:
 
 ```a2ui
-{
+{{
   "action": "createSurface",
   "surfaceId": "finance_dynamic_surface",
   "title": "Title of the Dynamic Board",
   "components": [
-    {
+    {{
       "id": "widget_unique_id",
       "type": "A2UIKpiCard",
       "title": "Card Title",
-      "value": "Display Value (e.g., \u20ac189,440.00)",
+      "value": "Display Value (e.g., €189,440.00)",
       "subtitle": "Sub-label details",
       "color": "teal"
-    },
-    {
+    }},
+    {{
       "id": "gauge_unique_id",
       "type": "A2UIGauge",
       "title": "Gauge Title",
@@ -127,25 +127,25 @@ Enclose your A2UI JSON payload inside a markdown code block with the language `a
       "max": 3.0,
       "status": "Healthy",
       "color": "emerald"
-    },
-    {
+    }},
+    {{
       "id": "chart_unique_id",
       "type": "A2UIVarianceChart",
       "title": "Variance Analysis Chart",
       "series": [
-        { "category": "Revenue", "actual": 1830000, "budget": 1920000, "variance": -90000 }
+        {{ "category": "Revenue", "actual": 1830000, "budget": 1920000, "variance": -90000 }}
       ]
-    },
-    {
+    }},
+    {{
       "id": "audit_unique_id",
       "type": "A2UIAuditChecklist",
       "title": "Audit Compliance Checklist",
       "items": [
-        { "label": "IAS 38 Research Cost Check", "status": "warning", "details": "Detailed auditing description and remediation recommendations." }
+        {{ "label": "IAS 38 Research Cost Check", "status": "warning", "details": "Detailed auditing description and remediation recommendations." }}
       ]
-    }
+    }}
   ]
-}
+}}
 ```
 
 Always use `a2ui` blocks to visualize your findings when reviewing metrics, displaying financial ratios, highlighting audit violations, or discussing variance analysis results. Keep these blocks concise, mathematically synchronized with your written statements, and beautifully structured.
