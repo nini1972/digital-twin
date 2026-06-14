@@ -38,6 +38,43 @@ import city_tools
 import city_chat_tools
 from city_scenario_schema import build_city_scenario_schema
 
+# ---------------------------------------------------------------------------
+# Global Session State for AI Finance Command Center
+# ---------------------------------------------------------------------------
+active_finance_state = {
+    "active_tab": "reports",
+    "selected_company": "parent_nv",
+    "reports_data": {},
+    "consolidation_data": {},
+    "review_data": {},
+    "data_update_data": {},
+    "logs": []
+}
+
+def update_finance_state_callback(section: str, identifier: str, data: dict):
+    from finance.agent_framework import ExecutionLog
+    active_finance_state["active_tab"] = section
+    active_finance_state["selected_company"] = identifier
+    if section == "reports":
+        active_finance_state["reports_data"][identifier] = data
+    elif section == "consolidation":
+        active_finance_state["consolidation_data"][identifier] = data
+    elif section == "review":
+        active_finance_state["review_data"][identifier] = data
+    elif section == "data_update":
+        active_finance_state["data_update_data"][identifier] = data
+    
+    # Sync logs
+    active_finance_state["logs"] = ExecutionLog.get_logs().copy()
+
+# Save initial baseline financial data for reset capabilities
+try:
+    from finance.data_provider import get_raw_data
+    INITIAL_FINANCIAL_DATA = copy.deepcopy(get_raw_data())
+except Exception as e:
+    print(f"Warning: Could not load initial financial data baseline: {e}")
+    INITIAL_FINANCIAL_DATA = None
+
 
 def _parse_cors_origins() -> list[str]:
     raw_origins = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
@@ -840,18 +877,21 @@ def simulate_scenario(
 
 
 def call_llm(conversation: List[Dict], user_message: str) -> str:
-    """Call LLM API with conversation history and tool calling"""
+    """Call LLM API with conversation history and upgraded finance tool calling"""
     if not openai_client:
         raise HTTPException(status_code=500, detail="OpenAI client is not initialized")
 
-    messages = []
+    from finance_tools import build_finance_tools, execute_finance_tool_call
 
-    sim_state = engine.get_state() if 'engine' in globals() else None
+    messages = []
+    
+    # Generate financial specialist prompt (no sim_state needed)
     messages.append({
         "role": "system",
-        "content": prompt(sim_state)
+        "content": prompt()
     })
 
+    # Append recent conversation history
     for msg in conversation[-20:]:
         messages.append({
             "role": msg["role"],
@@ -863,182 +903,8 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
         "content": user_message
     })
 
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "add_resident_agents",
-                "description": "Add a specified number of resident EV agents to the city simulation.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "count": {
-                            "type": "integer",
-                            "description": "The number of resident agents to add. Default is 1."
-                        }
-                    },
-                    "required": ["count"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "add_charging_hubs",
-                "description": "Add a specified number of charging hubs to the city simulation.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "count": {
-                            "type": "integer",
-                            "description": "The number of charging hubs to add. Default is 1."
-                        }
-                    },
-                    "required": ["count"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "trigger_surge_event",
-                "description": "Trigger a traffic or power surge event by instantly dropping the battery of a random subset of residents to a critical level (<20%).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "percentage": {
-                            "type": "integer",
-                            "description": "Percentage of residents affected (1 to 100). Default is 25."
-                        }
-                    },
-                    "required": ["percentage"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "set_global_parameters",
-                "description": "Update global simulation parameters like charging speed, battery drain rate, and hub-selection weights.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "charging_speed": {
-                            "type": "number",
-                            "description": "The amount of battery % a hub restores per tick. Default is 5.0."
-                        },
-                        "battery_drain": {
-                            "type": "number",
-                            "description": "The amount of battery % a resident drains per tick while driving. Default is 0.2."
-                        },
-                        "distance_weight": {
-                            "type": "number",
-                            "description": "Weight applied to distance-squared when residents score hubs. Higher = residents prioritise proximity. Default is 1.0."
-                        },
-                        "price_weight": {
-                            "type": "number",
-                            "description": "Weight applied to hub price when residents score hubs. Higher = residents prioritise cheaper hubs. Default is 50.0."
-                        }
-                    }
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "set_weather",
-                "description": "Change the simulation weather, which affects EV battery drain and charging speed. Options: 'sunny' (normal), 'storm' (high drain, slow charge), 'extreme_heat' (max drain).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "condition": {
-                            "type": "string",
-                            "enum": ["sunny", "storm", "extreme_heat"],
-                            "description": "The weather condition to apply."
-                        }
-                    },
-                    "required": ["condition"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "trigger_maintenance",
-                "description": "Simulate a hardware failure or maintenance event by randomly disabling one active charging hub.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {}
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "set_hub_price",
-                "description": "Manually set the electricity price for a specific charging hub.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "hub_id": {
-                            "type": "string",
-                            "description": "The ID of the hub, e.g., 'hub_0'"
-                        },
-                        "price": {
-                            "type": "number",
-                            "description": "The new price per kWh"
-                        }
-                    },
-                    "required": ["hub_id", "price"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "execute_python",
-                "description": "Execute a python snippet to perform custom calculations based on simulation data. The 'engine' variable is available in the local scope.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "The python code to execute. Print the final result so it can be captured in stdout."
-                        }
-                    },
-                    "required": ["code"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "simulate_scenario",
-                "description": "Run a fast-forward projection simulation to evaluate 'What-If' scenarios without affecting the live city state. Use this to predict the impact of policy changes before applying them.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "scenario_actions": {
-                            "type": "array",
-                            "description": "List of actions to apply in the scenario (e.g., [{'type': 'set_hub_price', 'hub_id': 'hub_0', 'price': 0.4}]).",
-                            "items": {
-                                "type": "object"
-                            }
-                        },
-                        "horizon_ticks": {
-                            "type": "integer",
-                            "description": "Number of simulation ticks to project into the future. Default is 30."
-                        },
-                        "runs": {
-                            "type": "integer",
-                            "description": "Number of Monte Carlo simulation runs to average. Default is 3."
-                        }
-                    },
-                    "required": ["scenario_actions"]
-                }
-            }
-        }
-    ]
+    # Load corporate finance tools list
+    tools = build_finance_tools()
 
     try:
         response = openai_client.chat.completions.create(
@@ -1062,111 +928,14 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                 except Exception:
                     function_args = {}
 
-                if function_name == "add_resident_agents":
-                    count = function_args.get("count", 1)
-                    from simulation import ResidentAgent
-                    for _ in range(count):
-                        new_res = ResidentAgent(f"res_{len(engine.residents)}")
-                        engine.residents.append(new_res)
-                    result_body = {"status": "success", "message": f"Added {count} residents."}
-                    print(f"Oracle executed tool: Added {count} residents.")
-                elif function_name == "add_charging_hubs":
-                    count = function_args.get("count", 1)
-                    from simulation import ChargingHubAgent
-                    for _ in range(count):
-                        new_hub = ChargingHubAgent(f"hub_{len(engine.hubs)}")
-                        engine.hubs.append(new_hub)
-                    result_body = {"status": "success", "message": f"Added {count} hubs."}
-                    print(f"Oracle executed tool: Added {count} hubs.")
-                elif function_name == "trigger_surge_event":
-                    percentage = function_args.get("percentage", 25)
-                    affected_count = max(1, int(len(engine.residents) * (percentage / 100)))
-                    affected_agents = random.sample(engine.residents, min(affected_count, len(engine.residents)))
-                    for res in affected_agents:
-                        res.battery = random.uniform(5, 20)
-                    result_body = {"status": "success", "message": f"Triggered surge event affecting {len(affected_agents)} residents."}
-                    print(f"Oracle executed tool: Triggered surge event ({percentage}%).")
-                elif function_name == "set_global_parameters":
-                    if "charging_speed" in function_args:
-                        engine.global_charging_speed = float(function_args["charging_speed"])
-                    if "battery_drain" in function_args:
-                        engine.global_battery_drain = float(function_args["battery_drain"])
-                    if "distance_weight" in function_args:
-                        engine.distance_weight = float(function_args["distance_weight"])
-                    if "price_weight" in function_args:
-                        engine.price_weight = float(function_args["price_weight"])
-                    result_body = {"status": "success", "message": f"Updated parameters: charging_speed={engine.global_charging_speed}, battery_drain={engine.global_battery_drain}, distance_weight={engine.distance_weight}, price_weight={engine.price_weight}"}
-                    print("Oracle executed tool: Set global parameters.")
-                elif function_name == "set_weather":
-                    condition = function_args.get("condition", "sunny")
-                    engine.weather = condition
-                    if condition == "sunny":
-                        engine.global_battery_drain = 0.2
-                        engine.global_charging_speed = 5.0
-                    elif condition == "storm":
-                        engine.global_battery_drain = 0.5
-                        engine.global_charging_speed = 2.0
-                    elif condition == "extreme_heat":
-                        engine.global_battery_drain = 0.8
-                        engine.global_charging_speed = 4.0
-                    result_body = {"status": "success", "message": f"Weather set to {condition}. Parameters updated accordingly."}
-                    print(f"Oracle executed tool: Set weather to {condition}.")
-                elif function_name == "trigger_maintenance":
-                    active_hubs = [hub for hub in engine.hubs if hub.active]
-                    if active_hubs:
-                        hub_to_disable = random.choice(active_hubs)
-                        hub_to_disable.active = False
-                        result_body = {"status": "success", "message": f"Disabled hub {hub_to_disable.id} for maintenance."}
-                    else:
-                        result_body = {"status": "error", "message": "No active hubs to disable."}
-                    print("Oracle executed tool: Triggered maintenance.")
-                elif function_name == "set_hub_price":
-                    hub_id = function_args.get("hub_id")
-                    price = function_args.get("price")
-                    hub = next((hub for hub in engine.hubs if hub.id == hub_id), None)
-                    if hub:
-                        hub.price = float(price)
-                        result_body = {"status": "success", "message": f"Set {hub_id} price to {price}."}
-                    else:
-                        result_body = {"status": "error", "message": f"Hub {hub_id} not found."}
-                    print("Oracle executed tool: Set hub price.")
-                elif function_name == "execute_python":
-                    if not ALLOW_CODE_EXECUTION:
-                        result_body = {
-                            "status": "disabled",
-                            "message": "Python code execution is disabled on this server. Set ALLOW_CODE_EXECUTION=true to enable it."
-                        }
-                        print("Oracle execute_python skipped: ALLOW_CODE_EXECUTION is disabled.")
-                    else:
-                        code = function_args.get("code", "")
-                        import io
-                        import sqlite3
-                        old_stdout = sys.stdout
-                        redirected_output = sys.stdout = io.StringIO()
-                        try:
-                            db_path = os.path.join(os.path.dirname(__file__), 'data', 'simulation.db')
-                            local_vars = {
-                                "engine": engine,
-                                "sqlite3": sqlite3,
-                                "os": os,
-                                "DB_PATH": db_path,
-                            }
-                            exec(code, {}, local_vars)
-                            output = redirected_output.getvalue()
-                            result_body = {"status": "success", "output": output}
-                        except Exception as e:
-                            result_body = {"status": "error", "message": str(e)}
-                        finally:
-                            sys.stdout = old_stdout
-                        print("Oracle executed python code.")
-                elif function_name == "simulate_scenario":
-                    scenario_actions = function_args.get("scenario_actions", [])
-                    horizon_ticks = function_args.get("horizon_ticks", 30)
-                    runs = function_args.get("runs", 3)
-                    result_body = simulate_scenario(scenario_actions, horizon_ticks, runs)
-                    print(f"Oracle executed tool: Simulate scenario with {len(scenario_actions)} actions over {horizon_ticks} ticks.")
-                else:
-                    result_body = {"status": "error", "message": "Unknown tool."}
+                print(f"Finance Specialist Twin executing tool: {function_name} with args: {function_args}")
+                
+                # Execute the financial tool call and route it through the multi-agent orchestrator
+                result_body = execute_finance_tool_call(
+                    function_name=function_name,
+                    function_args=function_args,
+                    update_state_callback=update_finance_state_callback
+                )
 
                 messages.append({
                     "tool_call_id": tool_call.id,
@@ -1242,6 +1011,61 @@ async def chat(request: ChatRequest):
         raise
     except Exception as e:
         print(f"Error in chat endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# AI Finance Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/finance/state")
+async def get_finance_state():
+    """Retrieve the current live state of the AI Finance Command Center."""
+    # Pre-populate state if empty to enable instant loading on client startup
+    if not active_finance_state.get("reports_data"):
+        try:
+            from finance_tools import execute_finance_tool_call
+            # Initialize with default company reports
+            for cid in ["parent_nv", "flanders_bv", "france_sas", "us_inc"]:
+                execute_finance_tool_call("get_financial_statements", {"company_id": cid}, update_finance_state_callback)
+            
+            # Initialize group consolidation
+            execute_finance_tool_call("run_group_consolidation", {}, update_finance_state_callback)
+            
+            # Initialize reviews
+            execute_finance_tool_call("review_financial_records", {"company_id": "parent_nv"}, update_finance_state_callback)
+        except Exception as e:
+            print(f"Warning: Failed to pre-populate finance state baseline: {e}")
+            
+    return active_finance_state
+
+@app.post("/api/finance/reset")
+async def reset_finance_state():
+    """Reset the financial figures and state back to default baseline."""
+    try:
+        from finance.data_provider import save_raw_data
+        from finance.agent_framework import ExecutionLog
+        
+        # Restore raw data
+        if INITIAL_FINANCIAL_DATA:
+            save_raw_data(copy.deepcopy(INITIAL_FINANCIAL_DATA))
+            
+        # Reset execution log
+        ExecutionLog.clear()
+        ExecutionLog.log("Chief CFO", "Database Reset", "Reverted trial balance database back to original baseline.")
+        
+        # Reset global active state
+        global active_finance_state
+        active_finance_state["active_tab"] = "reports"
+        active_finance_state["selected_company"] = "parent_nv"
+        active_finance_state["reports_data"] = {}
+        active_finance_state["consolidation_data"] = {}
+        active_finance_state["review_data"] = {}
+        active_finance_state["data_update_data"] = {}
+        active_finance_state["logs"] = ExecutionLog.get_logs().copy()
+        
+        return {"status": "success", "message": "Financial data and session state have been successfully reset."}
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -21,12 +21,11 @@ static site)        │                     │
 
 ## Features
 
-- **Conversational AI** — multi-turn chat with full session memory stored in S3
-- **Your persona** — the AI is briefed with your LinkedIn profile, a bio summary, your communication style, and key facts
-- **Jailbreak-resistant** — the system prompt instructs the model to refuse prompt-injection attempts
-- **Fully serverless** — Lambda + API Gateway, scales to zero when idle
-- **One-command deploy** — a single script builds the Lambda package, runs Terraform, and syncs the frontend to S3
-- **Optional custom domain** — supports Route 53 + ACM certificate setup for a custom domain
+- **AI Corporate Finance Command Center** — Graduated Dominique's digital twin chat (`/chat`) into an elite corporate finance specialist (BGAAP/IFRS compliance, multi-currency translations, intercompany eliminations, Private Equity, and compliance checks) with a gorgeous glassmorphic dual-pane dashboard.
+- **Declarative A2UI Protocol** — Implements Google's Agent-to-User Interface (A2UI) protocol to dynamically parse, stream, and render responsive visual widgets (KPI cards, SVG Gauges, variance charts, checklists, and datagrids) on the RHS panel in real time based on chat discussions.
+- **Group Consolidation & Multi-Currency** — Automatically translates USD to EUR, eliminates intercompany receivables/payables and fee transactions, calculates Non-Controlling Interest (NCI) for subsidiaries, and compiles perfectly balanced consolidated statements (resolving the 529.6k EUR equity discrepancy with a virtual investment asset elimination).
+- **Compliance & Audit Engine** — Detects ledger discrepancies, reviews research cost capitalization under IFRS vs. BGAAP (IAS 38 rules), and evaluates financial ratios (Current Ratio, Debt-to-Equity).
+- **Cortex Multi-Agent Framework** — Uses an executable python framework inside `agent_framework.py` managing a cooperative agent pipeline (`Scout`, `Consolidator`, `Auditor`, `Chief CFO`) to automate complex tasks and output structured logs.
 - **Agentic EV Micro-Twin** — a live multi-agent city simulation (resident EVs, charging hubs, traffic flow, congestion zones, adaptive pricing) runs in the background
 - **Executable City Oracle** — the Oracle can actuate the simulation in real time by calling backend tools to reroute traffic, adjust zone signal timing, change hub state and pricing, and add new agents
 - **Sandboxed live analysis** — the Oracle can run bounded Python snippets against live city state and aggregate metrics through a sandboxed subprocess tool
@@ -163,16 +162,20 @@ Place these files in `frontend/public/`. They are required by the default fronte
 
 ---
 
-## Local Development
+## Local Development & Startup
+
+To test the **AI Corporate Finance Specialist Command Center** and the rest of the digital twin application locally, follow these steps:
 
 ### 1. Configure environment variables
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in your AWS account ID and region
+# Edit .env and fill in your AWS account ID and region (and ensure your OPENAI_API_KEY is set)
 ```
 
-### 2. Start the backend
+### 2. Start the Backend server
+
+Navigate to the `backend/` directory, sync dependencies, and start the FastAPI dev server:
 
 ```bash
 cd backend
@@ -180,13 +183,13 @@ uv sync                         # Install dependencies
 uv run python -m uvicorn server:app --reload
 ```
 
-The API is now available at `http://localhost:8000`.
+*   The API is now running locally at `http://localhost:8000`.
+*   Run the backend from the `backend/` directory to ensure relative database and file loading works correctly.
+*   By default, conversation history is stored in the `memory/` directory (relative to the project root). Set `USE_S3=true` and `S3_BUCKET=<bucket>` in `.env` to use S3 instead.
 
-Run the backend from the `backend/` directory. Some local resources are loaded from `./data/...`, so starting it from the repo root can fail.
+### 3. Start the Frontend client
 
-By default, conversation history is stored in the `memory/` directory (relative to the project root). Set `USE_S3=true` and `S3_BUCKET=<bucket>` in `.env` to use S3 instead.
-
-### 3. Start the frontend
+Open a new terminal window, navigate to the `frontend/` directory, install packages, and start Next.js:
 
 ```bash
 cd frontend
@@ -194,9 +197,30 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000/twin](http://localhost:3000/twin) for the landing page experience, [http://localhost:3000/chat](http://localhost:3000/chat) for the chat interface, or [http://localhost:3000/simulation](http://localhost:3000/simulation) for the live simulation dashboard. The chat calls `http://127.0.0.1:8000` by default — override with `NEXT_PUBLIC_API_URL` in `frontend/.env.local`.
+*   Next.js is now running at `http://localhost:3000`.
 
-The city twin UI is available at [http://localhost:3000/city](http://localhost:3000/city). It connects to the live city websocket and the `/city/chat` Oracle endpoint.
+---
+
+## Exploring the Portals
+
+### 🌟 AI Finance Specialist Command Center (`/chat`)
+Navigate to [http://localhost:3000/chat](http://localhost:3000/chat) to experience the premium **Dual-Pane Finance Workspace**:
+*   **Instant Load**: On startup, the dashboard automatically pre-populates and loads baseline financial statements, consolidated ledgers, and audit logs.
+*   **LHS (Conversational Twin)**: Discuss, review, and edit figures using Dominique's professional CFO persona.
+    *   *Try asking*: *"Can you review our company figures for this quarter?"*
+    *   *Try asking*: *"Consolidate the figures of our entities."*
+    *   *Try asking*: *"Let's adjust Parent NV sales to €500,000."* (The agent will run `update_financial_figure` and immediately update the dashboard in real-time!)
+*   **RHS (Financial Intelligence Dashboard)**:
+    *   **Reports Tab**: View Balance Sheets, Income Statements (P&L), and Cash Flows for each subsidiary or parent.
+    *   **Worksheet Tab**: Interactive group consolidation multi-column sheet detailing FX translations, intercompany elimination adjustments, and Non-Controlling Interest (NCI).
+    *   **Audits Tab**: Live compliance indicators detailing ledger mismatches, BGAAP/IFRS variations (IAS 38), and safety ratios.
+    *   **Logs Tab**: Real-time logs of the specialized Python sub-agents (`Scout`, `Consolidator`, `Auditor`, `Chief CFO`) as they execute tasks!
+
+### 🚗 EV Simulation Dashboard (`/simulation`)
+Navigate to [http://localhost:3000/simulation](http://localhost:3000/simulation) to watch autonomous electric vehicles navigate a 100 × 100 city grid, search for charger availability, and queue up at local charging hubs.
+
+### 🏙️ City Twin UI (`/city`)
+Navigate to [http://localhost:3000/city](http://localhost:3000/city) to interact with the **City Oracle**. Ask your twin to trigger a storm, spawn more vehicles, or adjust zone speeds, and watch the simulation respond live.
 
 ### City Oracle capabilities
 
