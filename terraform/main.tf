@@ -16,6 +16,60 @@ locals {
   }
 }
 
+# S3 bucket for Lambda deployment packages
+resource "aws_s3_bucket" "lambda_code" {
+  bucket = "${local.name_prefix}-lambda-code-${data.aws_caller_identity.current.account_id}"
+  tags   = local.common_tags
+}
+
+resource "aws_s3_bucket_public_access_block" "lambda_code" {
+  bucket = aws_s3_bucket.lambda_code.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_versioning" "lambda_code" {
+  bucket = aws_s3_bucket.lambda_code.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "lambda_code" {
+  bucket = aws_s3_bucket.lambda_code.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "lambda_code" {
+  bucket = aws_s3_bucket.lambda_code.id
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}
+
+resource "aws_s3_object" "lambda_zip" {
+  bucket = aws_s3_bucket.lambda_code.id
+  key    = "lambda-deployment.zip"
+  source = "${path.module}/../backend/lambda-deployment.zip"
+  etag   = filemd5("${path.module}/../backend/lambda-deployment.zip")
+}
+
 # S3 bucket for conversation memory
 resource "aws_s3_bucket" "memory" {
   bucket = "${local.name_prefix}-memory-${data.aws_caller_identity.current.account_id}"
@@ -144,15 +198,17 @@ resource "aws_iam_role_policy" "lambda_secrets" {
 
 # Lambda function
 resource "aws_lambda_function" "api" {
-  filename         = "${path.module}/../backend/lambda-deployment.zip"
-  function_name    = "${local.name_prefix}-api"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = "lambda_handler.handler"
-  source_code_hash = filebase64sha256("${path.module}/../backend/lambda-deployment.zip")
-  runtime          = "python3.12"
-  architectures    = ["x86_64"]
-  timeout          = var.lambda_timeout
-  tags             = local.common_tags
+  s3_bucket         = aws_s3_bucket.lambda_code.id
+  s3_key            = aws_s3_object.lambda_zip.key
+  s3_object_version = aws_s3_object.lambda_zip.version_id
+  function_name     = "${local.name_prefix}-api"
+  role              = aws_iam_role.lambda_role.arn
+  handler           = "lambda_handler.handler"
+  source_code_hash  = filebase64sha256("${path.module}/../backend/lambda-deployment.zip")
+  runtime           = "python3.12"
+  architectures     = ["x86_64"]
+  timeout           = var.lambda_timeout
+  tags              = local.common_tags
 
   environment {
     variables = {
