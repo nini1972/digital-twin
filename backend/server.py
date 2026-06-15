@@ -48,8 +48,214 @@ active_finance_state = {
     "consolidation_data": {},
     "review_data": {},
     "data_update_data": {},
-    "logs": []
+    "logs": [],
+    "skills": [],
+    "midnight_audit_run": None
 }
+
+def get_all_skills():
+    """Scan and parse all compiled playbooks (skills) from the on-disk directory."""
+    skills_list = []
+    base_finance_dir = os.path.join(os.path.dirname(__file__), 'finance')
+    skills_dir = os.path.join(base_finance_dir, 'skills')
+    if os.path.exists(skills_dir) and os.path.isdir(skills_dir):
+        try:
+            skills_files = [f for f in os.listdir(skills_dir) if f.endswith('.md')]
+            for sfile in skills_files:
+                spath = os.path.join(skills_dir, sfile)
+                with open(spath, 'r', encoding='utf-8') as sf:
+                    s_text = sf.read()
+                
+                # Parse frontmatter
+                yaml_meta = {}
+                procedure = s_text
+                if s_text.startswith('---'):
+                    parts = s_text.split('---', 2)
+                    if len(parts) >= 3:
+                        fm_lines = parts[1].strip().split('\n')
+                        for line in fm_lines:
+                            if ':' in line:
+                                k, v = line.split(':', 1)
+                                val = v.strip()
+                                if val.startswith('[') and val.endswith(']'):
+                                    val = [item.strip().strip("'").strip('"') for item in val[1:-1].split(',') if item.strip()]
+                                yaml_meta[k.strip()] = val
+                        procedure = parts[2].strip()
+                
+                skills_list.append({
+                    "id": sfile.replace('.md', ''),
+                    "name": yaml_meta.get('name', sfile.replace('.md', '').replace('_', ' ').title()),
+                    "description": yaml_meta.get('description', 'No description provided.'),
+                    "version": yaml_meta.get('version', '1.0.0'),
+                    "category": yaml_meta.get('category', 'compliance-audit'),
+                    "requires_tools": yaml_meta.get('requires_tools', []),
+                    "procedure": procedure,
+                    "filename": sfile
+                })
+        except Exception as e:
+            print(f"Error parsing playbooks in server: {e}")
+    return skills_list
+
+async def execute_midnight_audit():
+    """
+    Executes a simulated overnight Ledger Audit (NL-Cron equivalent).
+    Triggers compliance, consolidation, and intercompany checks in headless mode,
+    stores critical warnings under active_finance_state["midnight_audit_run"],
+    and logs real-time entries so the Cortex typing console can capture it.
+    """
+    from finance.agent_framework import AgenticOrchestrator, ExecutionLog
+    
+    # Log starting cognitive trace
+    ExecutionLog.log("Scout", "Trigger Overnight Audit", "Natural language cron scheduler initiated. Preparing headless ledger review.")
+    
+    try:
+        orchestrator = AgenticOrchestrator()
+        
+        # Execute tasks headlessly to simulate a full audit
+        ExecutionLog.log("Scout", "Scout Scanning Ledgers", "Starting Trial Balance checks for parent_nv, flanders_bv, france_sas, us_inc...")
+        await asyncio.sleep(0.5) # Allow typewriter simulation delay
+        reconcile_res = orchestrator.execute_task("reconcile_ledgers")
+        
+        ExecutionLog.log("Consolidator", "Performing Eliminations", "Analyzing intercompany sales and fee balances for consolidation matching...")
+        await asyncio.sleep(0.5)
+        consolidation_res = orchestrator.execute_task("group_consolidation")
+        
+        ExecutionLog.log("Auditor", "Auditing Regulatory Rules", "Running compliance checking for IFRS and BGAAP differences...")
+        await asyncio.sleep(0.5)
+        compliance_res = orchestrator.execute_task("compliance_audit")
+        
+        ExecutionLog.log("Chief CFO", "Compiling Audit Briefing", "Aggregating findings into enterprise message card payload alerts.")
+        
+        # Build the final alerts structure
+        alerts = [
+            {
+                "id": "alert_ias38",
+                "severity": "critical",
+                "title": "IFRS Intangible Asset Capitalization Violation",
+                "message": "Solaria Group NV (parent_nv) has capitalized EUR 45,000 in pure Research Costs on its Balance Sheet under assets. Under IFRS IAS 38, research expenditures must be immediately expensed in the P&L.",
+                "remediation": "Reclass research costs as operational expenses: Debit Research & Development Expense / Credit Capitalized Research (Assets) EUR 45,000."
+            },
+            {
+                "id": "alert_intercompany_mismatch",
+                "severity": "warning",
+                "title": "Intercompany Ledger Discrepancy Detect",
+                "message": "Intercompany ledger mismatch: Parent NV records a EUR 48,000 receivable from Flanders BV, but Flanders BV records a EUR 50,000 payable to Parent NV. This creates an unaligned EUR 2,000 variance.",
+                "remediation": "Align the accounts by recording an adjusting entry in Flanders BV to match Parent NV's recorded receivable."
+            }
+        ]
+        
+        # Build simulated corporate platform integration alerts!
+        teams_card = {
+            "type": "AdaptiveCard",
+            "version": "1.4",
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": "🚨 Solaria Group Midnight Audit Report",
+                    "weight": "Bolder",
+                    "size": "Medium"
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "Automated ledger review completed successfully.",
+                    "isSubtle": True,
+                    "wrap": True
+                },
+                {
+                    "type": "FactSet",
+                    "facts": [
+                        {"title": "Audit Date", "value": datetime.now().strftime("%Y-%m-%d")},
+                        {"title": "Entities Audited", "value": "parent_nv, flanders_bv, france_sas, us_inc"},
+                        {"title": "Compliance Status", "value": "⚠️ 2 Alerts Found"}
+                    ]
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "1. **Critical (IFRS IAS 38)**: Capitalized Research Costs (EUR 45,000) under asset must be expensed.\n2. **Warning (Reconciliation)**: EUR 2,000 intercompany ledger mismatch between Parent NV and Flanders BV.",
+                    "wrap": True
+                }
+            ],
+            "actions": [
+                {
+                    "type": "Action.OpenUrl",
+                    "title": "Open Dashboard Console",
+                    "url": "http://localhost:3000"
+                }
+            ]
+        }
+        
+        email_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; background-color: #ffffff;">
+            <div style="background-color: #1e293b; padding: 16px; border-radius: 8px 8px 0 0; text-align: center; color: #ffffff;">
+                <h2 style="margin: 0; font-size: 20px; font-weight: bold; letter-spacing: -0.5px;">Solaria Group Overnight Ledger Report</h2>
+                <p style="margin: 4px 0 0 0; font-size: 12px; opacity: 0.8;">Dominique's Twin Autonomous Audit System</p>
+            </div>
+            
+            <div style="padding: 20px 0;">
+                <p style="font-size: 14px; color: #475569; line-height: 1.5;">Hello Chief CFO,</p>
+                <p style="font-size: 14px; color: #475569; line-height: 1.5;">The scheduled <b>Midnight Ledger Audit</b> run was executed successfully at 00:00. Below is the automated summary of compliance deviations and reconciliation warnings:</p>
+                
+                <div style="background-color: #fff1f2; border-left: 4px solid #f43f5e; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
+                    <h4 style="margin: 0 0 4px 0; color: #9f1239; font-size: 14px;">❌ CRITICAL: IFRS IAS 38 Capitalization Violation</h4>
+                    <p style="margin: 0; font-size: 13px; color: #4c0519; line-height: 1.4;">Solaria Group NV (parent_nv) has capitalized EUR 45,000 in pure Research Costs on its Balance Sheet under assets. Under IFRS IAS 38, research expenditures must be immediately expensed in the P&L.</p>
+                </div>
+                
+                <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
+                    <h4 style="margin: 0 0 4px 0; color: #92400e; font-size: 14px;">⚠️ WARNING: Intercompany Balance Mismatch (EUR 2,000)</h4>
+                    <p style="margin: 0; font-size: 13px; color: #78350f; line-height: 1.4;">Intercompany ledger mismatch: Parent NV records a EUR 48,000 receivable from Flanders BV, but Flanders BV records a EUR 50,000 payable to Parent NV.</p>
+                </div>
+                
+                <p style="font-size: 13px; color: #64748b; line-height: 1.5; margin-top: 24px;">Please review the digital twin live dashboard to apply adjusting entries and resolve these discrepancies.</p>
+            </div>
+            
+            <div style="border-top: 1px solid #e2e8f0; padding-top: 16px; font-size: 11px; color: #94a3b8; text-align: center;">
+                This email was auto-generated by the Solaria Digital Twin. Private & Confidential.
+            </div>
+        </div>
+        """
+        
+        whatsapp_text = "📱 *Dominique's Twin Midnight Audit Summary*\\n\\n" \
+                        "🚨 *Solaria Ledger Review completed with 2 alerts.*\\n\\n" \
+                        "❌ *Critical (IFRS IAS 38)*: Capitalized Research Costs (EUR 45,000) under asset must be expensed in parent_nv.\\n" \
+                        "⚠️ *Warning*: Intercompany ledger mismatch between Parent NV and Flanders BV of *EUR 2,000*.\\n\\n" \
+                        "👉 Click here to review the Command Center Dashboard: http://localhost:3000"
+        
+        active_finance_state["midnight_audit_run"] = {
+            "timestamp": datetime.now().isoformat(),
+            "status": "completed",
+            "violations_found": len(alerts),
+            "alerts": alerts,
+            "integrations": {
+                "teams": {
+                    "title": "Microsoft Teams Alert: Critical Compliance Warnings",
+                    "adaptive_card": teams_card
+                },
+                "outlook": {
+                    "subject": "⚠️ Solaria Group Ledger Audit: Critical Compliance Deviations Detected",
+                    "html_body": email_html
+                },
+                "whatsapp": {
+                    "message": whatsapp_text
+                }
+            }
+        }
+        
+        ExecutionLog.log("Chief CFO", "Audit Reporting Broadcast", "Overnight briefing package compiled and synchronized with client UI.")
+        
+    except Exception as e:
+        print(f"Error executing midnight audit: {e}")
+        active_finance_state["midnight_audit_run"] = {
+            "timestamp": datetime.now().isoformat(),
+            "status": "failed",
+            "error": str(e),
+            "violations_found": 0,
+            "alerts": []
+        }
+        ExecutionLog.log("Chief CFO", "Audit Run Failed", f"Headless audit run encountered error: {str(e)}", status="failed")
+
+    # Sync state
+    active_finance_state["skills"] = get_all_skills()
+    active_finance_state["logs"] = ExecutionLog.get_logs().copy()
 
 def update_finance_state_callback(section: str, identifier: str, data: dict):
     from finance.agent_framework import ExecutionLog
@@ -64,7 +270,8 @@ def update_finance_state_callback(section: str, identifier: str, data: dict):
     elif section == "data_update":
         active_finance_state["data_update_data"][identifier] = data
     
-    # Sync logs
+    # Sync skills and logs
+    active_finance_state["skills"] = get_all_skills()
     active_finance_state["logs"] = ExecutionLog.get_logs().copy()
 
 # Save initial baseline financial data for reset capabilities
@@ -91,6 +298,27 @@ def _parse_cors_origins() -> list[str]:
         "http://[::1]:3001",
     ]
 
+async def run_midnight_audit_scheduler():
+    """
+    Background loop simulating midnight audit run (NL-Cron) every 24 hours.
+    Sleeps for 24 hours between runs. Can be manually triggered via REST endpoint.
+    """
+    try:
+        # Initial sleep for 10 seconds on server start to let things boot,
+        # then execute the first audit if not already present.
+        await asyncio.sleep(10)
+        if active_finance_state["midnight_audit_run"] is None:
+            await execute_midnight_audit()
+            
+        while True:
+            # Sleep 24 hours
+            await asyncio.sleep(86400)
+            await execute_midnight_audit()
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"Error in midnight audit scheduler background loop: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize SQLite database (creates tables incl. new city ones)
@@ -101,6 +329,8 @@ async def lifespan(app: FastAPI):
     await bus.connect()
     # --- Personal twin simulation ---
     task = asyncio.create_task(engine.run())
+    # --- Midnight audit scheduler ---
+    midnight_task = asyncio.create_task(run_midnight_audit_scheduler())
     # --- City twin multi-agent setup ---
     ev_scout = EVScoutAgent()
     traffic_scout = TrafficScoutAgent()
@@ -126,6 +356,7 @@ async def lifespan(app: FastAPI):
     engine.running = False
     city_engine.running = False
     task.cancel()
+    midnight_task.cancel()
     city_task.cancel()
     demand_task.cancel()
     congestion_task.cancel()
@@ -892,7 +1123,7 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
     # Generate financial specialist prompt (no sim_state needed)
     messages.append({
         "role": "system",
-        "content": prompt()
+        "content": prompt(user_query=user_message)
     })
 
     # Append recent conversation history
@@ -1041,7 +1272,35 @@ async def get_finance_state():
         except Exception as e:
             print(f"Warning: Failed to pre-populate finance state baseline: {e}")
             
+    # Always sync active skills list from disk
+    active_finance_state["skills"] = get_all_skills()
+    
+    # Pre-populate simulated midnight audit run on first dashboard hit if None
+    if active_finance_state.get("midnight_audit_run") is None:
+        try:
+            await execute_midnight_audit()
+        except Exception as e:
+            print(f"Warning: Failed to run initial midnight audit: {e}")
+            
     return active_finance_state
+
+@app.get("/api/finance/skills")
+async def get_finance_skills():
+    """Scan and retrieve all registered playbook skills in the finance module."""
+    return get_all_skills()
+
+@app.post("/api/finance/trigger-midnight-audit")
+async def trigger_midnight_audit():
+    """Manually invoke the simulated overnight natural language cron audit run."""
+    try:
+        await execute_midnight_audit()
+        return {
+            "status": "success",
+            "message": "Overnight audit completed successfully.",
+            "data": active_finance_state["midnight_audit_run"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to execute manual audit trigger: {str(e)}")
 
 @app.post("/api/finance/reset")
 async def reset_finance_state():
@@ -1066,9 +1325,14 @@ async def reset_finance_state():
         active_finance_state["consolidation_data"] = {}
         active_finance_state["review_data"] = {}
         active_finance_state["data_update_data"] = {}
+        active_finance_state["skills"] = get_all_skills()
+        active_finance_state["midnight_audit_run"] = None
         active_finance_state["logs"] = ExecutionLog.get_logs().copy()
         
-        return {"status": "success", "message": "Financial data and session state have been successfully reset."}
+        # Re-run a fresh midnight audit baseline
+        await execute_midnight_audit()
+        
+        return {"status": "success", "message": "Financial data, compiled playbooks, and session state have been successfully reset."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

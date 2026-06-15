@@ -118,6 +118,43 @@ def build_finance_tools():
                     "required": ["code"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_or_update_playbook",
+                "description": "Synthesize or update a reusable accounting/auditing procedural playbook (skill) on disk as a Markdown file with structured YAML frontmatter. This allows the digital twin to dynamically expand its permanent capabilities.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The unique, lowercase, alphanumeric name of the playbook with underscores instead of spaces (e.g., 'reconcile_receivables')."
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "A clear, descriptive summary of when to use this playbook."
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": ["accounting-consolidation", "compliance-audit", "tax-planning", "credit-risk", "financial-review"],
+                            "description": "The functional classification category of the playbook."
+                        },
+                        "requires_tools": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "List of native tools required to execute this playbook (e.g., ['get_financial_statements', 'review_financial_records'])."
+                        },
+                        "procedure": {
+                            "type": "string",
+                            "description": "The step-by-step procedural instructions in Markdown list format."
+                        }
+                    },
+                    "required": ["name", "description", "category", "requires_tools", "procedure"]
+                }
+            }
         }
     ]
 
@@ -274,6 +311,61 @@ def execute_finance_tool_call(function_name, function_args, update_state_callbac
                 }
             finally:
                 sys.stdout = old_stdout
+                
+        elif function_name == "create_or_update_playbook":
+            name = function_args.get("name", "").strip().lower()
+            description_meta = function_args.get("description", "").strip()
+            category = function_args.get("category", "compliance-audit").strip()
+            requires_tools = function_args.get("requires_tools", [])
+            procedure = function_args.get("procedure", "").strip()
+            
+            # 1. Security check: sanitize the playbook name to prevent directory traversal
+            import re
+            clean_name = re.sub(r'[^a-z0-9_]', '', name)
+            if not clean_name:
+                return {"status": "error", "message": "Playbook name must contain alphanumeric characters or underscores."}
+            
+            # Build file content
+            tools_str = f"[{', '.join(requires_tools)}]"
+            file_content = f"""---
+name: {clean_name}
+description: {description_meta}
+version: 1.0.0
+category: {category}
+requires_tools: {tools_str}
+---
+# {clean_name.replace('_', ' ').title()} Playbook
+
+## When to Use
+{description_meta}
+
+## Procedure
+{procedure}
+"""
+            
+            base_finance_dir = os.path.join(os.path.dirname(__file__), 'finance')
+            skills_dir = os.path.join(base_finance_dir, 'skills')
+            os.makedirs(skills_dir, exist_ok=True)
+            
+            filepath = os.path.join(skills_dir, f"{clean_name}.md")
+            
+            with open(filepath, 'w', encoding='utf-8') as pf:
+                pf.write(file_content)
+                
+            # Log action to orchestrator
+            ExecutionLog.log("Chief CFO", "Compile Dynamic Skill", f"Compiled and wrote playbook '{clean_name}.md' to disk under procedural memory.")
+            
+            result = {
+                "status": "success",
+                "name": clean_name,
+                "filename": f"{clean_name}.md",
+                "message": f"Successfully compiled and saved playbook '{clean_name}.md' to disk under procedural memory.",
+                "playbook_content": file_content
+            }
+            
+            if update_state_callback:
+                update_state_callback("skills_update", clean_name, result)
+            return result
                 
         else:
             return {"status": "error", "message": f"Unknown financial tool '{function_name}'"}
