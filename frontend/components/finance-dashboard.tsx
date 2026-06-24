@@ -112,7 +112,7 @@ const formatPercent = (val: number | undefined | null) => {
 // Main Dashboard Component
 // ============================================================================
 
-export default function FinanceDashboard({ 
+function FinanceDashboard({ 
     financeState, 
     activeA2UISurface, 
     onReset, 
@@ -1657,3 +1657,8 @@ export default function FinanceDashboard({
         </div>
     );
 }
+
+const MemoizedFinanceDashboard = React.memo(FinanceDashboard);
+MemoizedFinanceDashboard.displayName = 'FinanceDashboard';
+
+export default MemoizedFinanceDashboard;

@@ -111,8 +111,8 @@ class ChiefOracleAgent:
                     decisions_made += 1
             elif ftype == "degraded_fleet_pattern":
                 description = (
-                    f"Significant EV fleet battery degradation detected. "
-                    f"Routing efficiency drops and charging times increase. "
+                    f"Significant EV fleet battery degradation detected."
+                    f"Routing efficiency drops and charging times increase."
                     f"Recommend prioritizing battery health preservation routines and building more charging capacity."
                 )
                 if self._emit_decision_once(

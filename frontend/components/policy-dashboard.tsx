@@ -24,6 +24,18 @@ const DECISION_COLORS: Record<string, string> = {
   status_nominal: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]',
 };
 
+function ratioToWidthClass(ratio: number) {
+  if (ratio <= 0.02) return 'w-0';
+  if (ratio <= 0.125) return 'w-[12.5%]';
+  if (ratio <= 0.25) return 'w-1/4';
+  if (ratio <= 0.375) return 'w-[37.5%]';
+  if (ratio <= 0.5) return 'w-1/2';
+  if (ratio <= 0.625) return 'w-[62.5%]';
+  if (ratio <= 0.75) return 'w-3/4';
+  if (ratio <= 0.875) return 'w-[87.5%]';
+  return 'w-full';
+}
+
 export default function PolicyDashboard({ 
   decisions, 
   cityState,
@@ -43,6 +55,10 @@ export default function PolicyDashboard({
 }) {
   const activeSpeedLimits = Object.entries(cityState.zone_speed_limits).filter(([_, mult]) => mult < 1.0);
   const avgCongestion = Object.values(cityState.zone_congestion).reduce((a, b) => a + b, 0) / (Object.values(cityState.zone_congestion).length || 1);
+  const criticalRatio = segments?.battery_segments?.battery_critical?.ratio || 0;
+  const lowRatio = segments?.battery_segments?.battery_low?.ratio || 0;
+  const midRatio = segments?.battery_segments?.battery_mid?.ratio || 0;
+  const highRatio = segments?.battery_segments?.battery_high?.ratio || 0;
 
   return (
     <div className="p-7 rounded-[2rem] border border-orange-500/20 bg-gradient-to-b from-[#12121a]/90 to-[#0a0a10]/95 backdrop-blur-2xl shadow-[0_0_40px_rgba(234,88,12,0.06)] flex flex-col gap-6 relative overflow-hidden group transition-all duration-700 hover:shadow-[0_0_50px_rgba(234,88,12,0.12)]">
@@ -64,9 +80,10 @@ export default function PolicyDashboard({
               <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Advisor</span>
               <button
                 onClick={onToggleMode}
+                title="Toggle Oracle mode"
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none shadow-inner ${oracleMode === 'autopilot' ? 'bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.4)]' : 'bg-slate-700/80'}`}
               >
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${oracleMode === 'autopilot' ? 'translate-x-4.5' : 'translate-x-1'}`} style={{ transform: oracleMode === 'autopilot' ? 'translateX(18px)' : 'translateX(4px)' }} />
+                <span className={`oracle-toggle-thumb inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${oracleMode === 'autopilot' ? 'oracle-toggle-thumb-on' : 'oracle-toggle-thumb-off'}`} />
               </button>
               <span className={`text-[10px] font-bold uppercase tracking-widest ${oracleMode === 'autopilot' ? 'text-orange-400' : 'text-slate-500'}`}>Autopilot</span>
             </div>
@@ -101,12 +118,12 @@ export default function PolicyDashboard({
       </div>
 
       {/* Dynamic Throttle Module */}
-      {activeSpeedLimits.length > 0 && (
-        <div className="rounded-2xl border border-blue-500/20 bg-blue-500/[0.03] p-4 relative z-10 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]">
-          <div className="flex items-center gap-2 mb-3">
-            <Settings className="w-4 h-4 text-blue-400 animate-[spin_6s_linear_infinite]" />
-            <p className="text-[10px] uppercase tracking-wider text-blue-300 font-semibold">Active Traffic Throttle</p>
-          </div>
+      <div className="min-h-[114px] rounded-2xl border border-blue-500/20 bg-blue-500/[0.03] p-4 relative z-10 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]">
+        <div className="flex items-center gap-2 mb-3">
+          <Settings className="w-4 h-4 text-blue-400 animate-[spin_6s_linear_infinite]" />
+          <p className="text-[10px] uppercase tracking-wider text-blue-300 font-semibold">Active Traffic Throttle</p>
+        </div>
+        {activeSpeedLimits.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {activeSpeedLimits.slice(0, 4).map(([zone, limit]) => (
               <div key={zone} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20">
@@ -117,68 +134,86 @@ export default function PolicyDashboard({
               </div>
             ))}
             {activeSpeedLimits.length > 4 && (
-               <span className="px-2.5 py-1 rounded-full bg-blue-500/5 border border-blue-500/10 text-[11px] text-blue-300 font-mono">
-                 +{activeSpeedLimits.length - 4} more
-               </span>
+              <span className="px-2.5 py-1 rounded-full bg-blue-500/5 border border-blue-500/10 text-[11px] text-blue-300 font-mono">
+                +{activeSpeedLimits.length - 4} more
+              </span>
             )}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-xs text-blue-200/60">No active throttles. Oracle is currently running nominal speed limits.</p>
+        )}
+      </div>
 
       {/* Forecast Strip */}
-      {forecast && (
-        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.03] p-4 relative z-10 shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-emerald-400" />
-              <p className="text-[10px] uppercase tracking-wider text-emerald-300 font-semibold">Oracle Forecast ({forecast.horizon_ticks} Ticks)</p>
+      <div className="min-h-[122px] rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.03] p-4 relative z-10 shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
+        {forecast ? (
+          <>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-emerald-400" />
+                <p className="text-[10px] uppercase tracking-wider text-emerald-300 font-semibold">Oracle Forecast ({forecast.horizon_ticks} Ticks)</p>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-400/80">Conf: {(forecast.confidence * 100).toFixed(0)}%</span>
             </div>
-            <span className="text-[10px] font-mono text-emerald-400/80">Conf: {(forecast.confidence * 100).toFixed(0)}%</span>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                <span className="text-[10px] text-slate-400 block mb-1 uppercase">Proj. Queue</span>
+                <span className="font-mono text-emerald-200">{forecast.projected_total_queue}</span>
+              </div>
+              <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
+                <span className="text-[10px] text-slate-400 block mb-1 uppercase">Proj. Price</span>
+                <span className="font-mono text-emerald-200">${forecast.projected_avg_price.toFixed(3)}</span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="animate-pulse space-y-2">
+            <div className="h-3 w-36 rounded-full bg-white/10" />
+            <div className="h-8 rounded-xl bg-white/5" />
+            <div className="h-8 rounded-xl bg-white/5" />
           </div>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
-              <span className="text-[10px] text-slate-400 block mb-1 uppercase">Proj. Queue</span>
-              <span className="font-mono text-emerald-200">{forecast.projected_total_queue}</span>
-            </div>
-            <div className="bg-black/30 rounded-xl p-2.5 border border-white/5">
-              <span className="text-[10px] text-slate-400 block mb-1 uppercase">Proj. Price</span>
-              <span className="font-mono text-emerald-200">${forecast.projected_avg_price.toFixed(3)}</span>
-            </div>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Segment Insights */}
-      {segments && (
-        <div className="rounded-2xl border border-purple-500/20 bg-purple-500/[0.03] p-4 relative z-10 shadow-[inset_0_0_20px_rgba(168,85,247,0.05)]">
-          <div className="flex items-center gap-2 mb-3">
-            <Settings className="w-4 h-4 text-purple-400" />
-            <p className="text-[10px] uppercase tracking-wider text-purple-300 font-semibold">Segment Insights</p>
+      <div className="min-h-[145px] rounded-2xl border border-purple-500/20 bg-purple-500/[0.03] p-4 relative z-10 shadow-[inset_0_0_20px_rgba(168,85,247,0.05)]">
+        {segments ? (
+          <>
+            <div className="flex items-center gap-2 mb-3">
+              <Settings className="w-4 h-4 text-purple-400" />
+              <p className="text-[10px] uppercase tracking-wider text-purple-300 font-semibold">Segment Insights</p>
+            </div>
+            <div className="flex justify-between items-center bg-black/30 rounded-xl p-2.5 border border-white/5 mb-2">
+              <span className="text-xs text-slate-300">Demand Risk</span>
+              <span className={`text-xs font-mono uppercase font-bold ${segments.demand_risk_band === 'high' ? 'text-red-400' : segments.demand_risk_band === 'medium' ? 'text-orange-400' : 'text-emerald-400'}`}>
+                {segments.demand_risk_band}
+              </span>
+            </div>
+            <div className="grid grid-cols-4 gap-1 h-2 rounded-full overflow-hidden bg-white/10 mt-2">
+              <div className={`${ratioToWidthClass(criticalRatio)} bg-red-500 h-full`} title="Critical" />
+              <div className={`${ratioToWidthClass(lowRatio)} bg-orange-500 h-full`} title="Low" />
+              <div className={`${ratioToWidthClass(midRatio)} bg-yellow-500 h-full`} title="Mid" />
+              <div className={`${ratioToWidthClass(highRatio)} bg-green-500 h-full`} title="High" />
+            </div>
+            <div className="flex justify-between text-[9px] text-slate-500 mt-1 uppercase">
+              <span>Critical</span><span>High</span>
+            </div>
+          </>
+        ) : (
+          <div className="animate-pulse space-y-2">
+            <div className="h-3 w-28 rounded-full bg-white/10" />
+            <div className="h-8 rounded-xl bg-white/5" />
+            <div className="h-2 rounded-full bg-white/10" />
           </div>
-          <div className="flex justify-between items-center bg-black/30 rounded-xl p-2.5 border border-white/5 mb-2">
-            <span className="text-xs text-slate-300">Demand Risk</span>
-            <span className={`text-xs font-mono uppercase font-bold ${segments.demand_risk_band === 'high' ? 'text-red-400' : segments.demand_risk_band === 'medium' ? 'text-orange-400' : 'text-emerald-400'}`}>
-              {segments.demand_risk_band}
-            </span>
-          </div>
-          <div className="grid grid-cols-4 gap-1 h-2 rounded-full overflow-hidden bg-white/10 mt-2">
-             <div style={{width: `${(segments.battery_segments?.battery_critical?.ratio || 0) * 100}%`}} className="bg-red-500 h-full" title="Critical" />
-             <div style={{width: `${(segments.battery_segments?.battery_low?.ratio || 0) * 100}%`}} className="bg-orange-500 h-full" title="Low" />
-             <div style={{width: `${(segments.battery_segments?.battery_mid?.ratio || 0) * 100}%`}} className="bg-yellow-500 h-full" title="Mid" />
-             <div style={{width: `${(segments.battery_segments?.battery_high?.ratio || 0) * 100}%`}} className="bg-green-500 h-full" title="High" />
-          </div>
-          <div className="flex justify-between text-[9px] text-slate-500 mt-1 uppercase">
-            <span>Critical</span><span>High</span>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Recommended Actions Queue */}
-      {recommendations && recommendations.length > 0 && (
-        <div className="flex flex-col relative z-10 mt-2">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xs font-semibold uppercase tracking-widest text-orange-400 pl-1">Recommended Actions Queue</h3>
-          </div>
+      <div className="min-h-[120px] flex flex-col relative z-10 mt-2">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-orange-400 pl-1">Recommended Actions Queue</h3>
+        </div>
+        {recommendations && recommendations.length > 0 ? (
           <div className="space-y-2">
             {recommendations.map((rec, idx) => (
               <div key={idx} className="p-3 rounded-xl border border-orange-500/30 bg-orange-500/10 text-orange-200 text-sm flex items-start gap-3 shadow-sm">
@@ -187,8 +222,10 @@ export default function PolicyDashboard({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 text-xs text-slate-500">No recommendations queued yet.</div>
+        )}
+      </div>
 
       {/* Decisions Feed */}
       <div className="flex flex-col relative z-10 mt-2">

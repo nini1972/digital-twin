@@ -1,9 +1,40 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import Image from 'next/image';
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, User, HelpCircle, Activity, Sparkles, AlertCircle } from 'lucide-react';
-import FinanceDashboard from './finance-dashboard';
+import { startTransition, useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Activity, Sparkles } from 'lucide-react';
+
+const FinanceDashboard = dynamic(() => import('./finance-dashboard'), {
+    ssr: false,
+    loading: () => (
+        <div className="flex h-full min-h-[400px] items-center justify-center rounded-2xl border border-slate-800 bg-slate-950 text-slate-400">
+            <div className="text-center">
+                <p className="text-sm font-semibold text-slate-200">Loading finance dashboard...</p>
+                <p className="mt-1 text-xs text-slate-500">Deferring the heavy panel until the main chat is interactive.</p>
+            </div>
+        </div>
+    )
+});
+
+const SUGGESTED_AUDITS = [
+    {
+        text: "Run a comprehensive compliance audit of the group and identify accounting violations.",
+        label: "Audit compliance (IAS 38)"
+    },
+    {
+        text: "Consolidate the books of Solaria Group for FY25 and show me the elimination journal entries.",
+        label: "Consolidate Group Ledgers"
+    },
+    {
+        text: "Can you analyze Solaria France SAS individual reports and check its ratios?",
+        label: "View Subsidiary Ratios (France)"
+    },
+    {
+        text: "Reduce the capitalized research costs in parent NV to 0 in FY25_actual to resolve the IAS 38 compliance issue and run audits.",
+        label: "Adjust capitalized research (Direct update)"
+    }
+];
 
 interface Message {
     id: string;
@@ -39,7 +70,7 @@ export default function Twin() {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const avatarFadeOutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const [tilt, setTilt] = useState({ x: 0, y: 0 });
+    const avatarTiltRef = useRef<HTMLDivElement>(null);
 
     // AI Finance Specialist State
     const [financeState, setFinanceState] = useState<any>({
@@ -52,6 +83,9 @@ export default function Twin() {
         logs: []
     });
     const [activeA2UISurface, setActiveA2UISurface] = useState<any>(null);
+    const [welcomePhase, setWelcomePhase] = useState<
+        "text" | "fade" | "video" | "avatar" | "avatar-fade-out" | "hidden"
+    >("text");
 
     // Fetch the active financial state from the backend
     const fetchFinanceState = async () => {
@@ -60,7 +94,9 @@ export default function Twin() {
             const res = await fetch(`${apiUrl}/api/finance/state`);
             if (res.ok) {
                 const data = await res.json();
-                setFinanceState(data);
+                startTransition(() => {
+                    setFinanceState(data);
+                });
             }
         } catch (err) {
             console.error("Error fetching financial state from API:", err);
@@ -92,19 +128,61 @@ export default function Twin() {
 
     // Sync financial state on initial load
     useEffect(() => {
-        fetchFinanceState();
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        let idleId: number | null = null;
+
+        const loadFinanceState = () => {
+            void fetchFinanceState();
+        };
+
+        if ('requestIdleCallback' in window) {
+            idleId = window.requestIdleCallback(loadFinanceState, { timeout: 1200 });
+        } else {
+            timeoutId = setTimeout(loadFinanceState, 250);
+        }
+
+        return () => {
+            if (idleId !== null && 'cancelIdleCallback' in window) {
+                window.cancelIdleCallback(idleId);
+            }
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+        };
     }, []);
 
     // 3D Parallax Tilt Effect for Avatar Card
     useEffect(() => {
+        if (welcomePhase !== 'avatar') {
+            if (avatarTiltRef.current) {
+                avatarTiltRef.current.style.transform = 'rotateY(0deg) rotateX(0deg)';
+            }
+            return;
+        }
+
+        let frameId = 0;
         const handleMouseMove = (e: MouseEvent) => {
-            const x = (window.innerWidth / 2 - e.clientX) / 45;
-            const y = (window.innerHeight / 2 - e.clientY) / 45;
-            setTilt({ x, y });
+            if (frameId) {
+                cancelAnimationFrame(frameId);
+            }
+
+            frameId = requestAnimationFrame(() => {
+                const x = (window.innerWidth / 2 - e.clientX) / 45;
+                const y = (window.innerHeight / 2 - e.clientY) / 45;
+                if (avatarTiltRef.current) {
+                    avatarTiltRef.current.style.transform = `rotateY(${-x}deg) rotateX(${y}deg)`;
+                }
+            });
         };
+
         window.addEventListener('mousemove', handleMouseMove);
-        return () => window.removeEventListener('mousemove', handleMouseMove);
-    }, []);
+        return () => {
+            if (frameId) {
+                cancelAnimationFrame(frameId);
+            }
+            window.removeEventListener('mousemove', handleMouseMove);
+        };
+    }, [welcomePhase]);
 
     // Scroll to bottom of message list
     useEffect(() => {
@@ -113,10 +191,6 @@ export default function Twin() {
             block: 'start'
         });
     }, [messages]);
-
-    const [welcomePhase, setWelcomePhase] = useState<
-        "text" | "fade" | "video" | "avatar" | "avatar-fade-out" | "hidden"
-    >("text");
 
     // Fade-out welcome avatar
     const fadeOutWelcomeAvatar = useCallback(() => {
@@ -256,14 +330,6 @@ export default function Twin() {
         sendMessage(suggestion);
     };
 
-    // Check if avatar assets exist
-    const [hasAvatar, setHasAvatar] = useState(false);
-    useEffect(() => {
-        fetch('/avatar.png', { method: 'HEAD' })
-            .then(res => setHasAvatar(res.ok))
-            .catch(() => setHasAvatar(false));
-    }, []);
-
     return (
         <div className="flex flex-col lg:flex-row h-full w-full bg-slate-950 text-slate-100 gap-5 overflow-hidden">
             
@@ -306,7 +372,7 @@ export default function Twin() {
                             Welcome to the Solaria Group Corporate Intelligence Center.
                         </p>
                         <p className="text-xs mt-2 text-slate-400 leading-relaxed max-w-xs mx-auto">
-                            I am Dominique's AI Mirror. I coordinate our Scout, Consolidator, and Auditor agents to reviews books, consolidate financials, and evaluate compliance.
+                            I am Dominique&apos;s AI Mirror. I coordinate our Scout, Consolidator, and Auditor agents to reviews books, consolidate financials, and evaluate compliance.
                         </p>
                     </div>
                 )}
@@ -325,10 +391,10 @@ export default function Twin() {
                 )}
 
                 {welcomePhase === "avatar" && (
-                    <div className="flex justify-center mt-12 shrink-0" style={{ perspective: "1000px" }}>
+                    <div className="avatar-tilt-stage flex justify-center mt-12 shrink-0">
                         <div 
-                            className="transition-transform duration-75 ease-out" 
-                            style={{ transform: `rotateY(${-tilt.x}deg) rotateX(${tilt.y}deg)` }}
+                            ref={avatarTiltRef}
+                            className="avatar-tilt-card transition-transform duration-75 ease-out"
                         >
                             <Image
                                 src="/avatar.png"
@@ -363,24 +429,7 @@ export default function Twin() {
                             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Suggested Financial Audits</h3>
                         </div>
                         <div className="grid grid-cols-1 gap-2.5">
-                            {[
-                                { 
-                                    text: "Run a comprehensive compliance audit of the group and identify accounting violations.", 
-                                    label: "Audit compliance (IAS 38)" 
-                                },
-                                { 
-                                    text: "Consolidate the books of Solaria Group for FY25 and show me the elimination journal entries.", 
-                                    label: "Consolidate Group Ledgers" 
-                                },
-                                { 
-                                    text: "Can you analyze Solaria France SAS individual reports and check its ratios?", 
-                                    label: "View Subsidiary Ratios (France)" 
-                                },
-                                { 
-                                    text: "Reduce the capitalized research costs in parent NV to 0 in FY25_actual to resolve the IAS 38 compliance issue and run audits.", 
-                                    label: "Adjust capitalized research (Direct update)" 
-                                }
-                            ].map((sug, idx) => (
+                            {SUGGESTED_AUDITS.map((sug, idx) => (
                                 <button
                                     key={idx}
                                     onClick={() => handleSuggestionClick(sug.text)}
@@ -479,6 +528,7 @@ export default function Twin() {
                         <button
                             onClick={() => sendMessage()}
                             disabled={!input.trim() || isLoading}
+                            title="Send message"
                             className="px-4 py-2.5 bg-emerald-500 text-slate-950 hover:bg-emerald-400 rounded-xl font-bold text-xs disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-[0_0_15px_rgba(16,185,129,0.25)] hover:scale-105 active:scale-95 cursor-pointer flex items-center justify-center"
                         >
                             <Send className="w-4 h-4" />

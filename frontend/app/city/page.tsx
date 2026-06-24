@@ -1,9 +1,8 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Bot, User, Send, Loader2, Activity, Zap, Car, Radio } from 'lucide-react';
-import CityScenarioLab from '@/components/city-scenario-lab';
-import PolicyDashboard from '@/components/policy-dashboard';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,6 +31,7 @@ type CityState = {
   zone_congestion: Record<string, number>;
   zone_speed_limits: Record<string, number>;
   weather?: string;
+  metrics?: any;
 };
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -41,6 +41,42 @@ type Decision = {
   agent: string; type: string; description: string;
   confidence: number; tick: number | null; at: string;
 };
+
+type StartMode = 'smooth' | 'immediate';
+
+const START_MODE_STORAGE_KEY = 'city_start_mode';
+
+function SidebarPanelSkeleton({ title, className }: { title: string; className: string }) {
+  return (
+    <div className={`p-6 rounded-2xl border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl ${className}`}>
+      <div className="animate-pulse space-y-4">
+        <div className="h-3 w-28 rounded-full bg-white/10" />
+        <div className="h-5 w-52 rounded-full bg-white/10" />
+        <div className="space-y-2">
+          <div className="h-10 rounded-2xl bg-white/5" />
+          <div className="h-10 rounded-2xl bg-white/5" />
+          <div className="h-10 rounded-2xl bg-white/5" />
+        </div>
+        <p className="text-xs text-slate-500">Loading {title}…</p>
+      </div>
+    </div>
+  );
+}
+
+const CityScenarioLab = dynamic(() => import('@/components/city-scenario-lab'), {
+  ssr: false,
+  loading: () => <SidebarPanelSkeleton title="Scenario Lab" className="min-h-[520px]" />,
+});
+
+const PolicyDashboard = dynamic(() => import('@/components/policy-dashboard'), {
+  ssr: false,
+  loading: () => <SidebarPanelSkeleton title="Policy Dashboard" className="min-h-[760px]" />,
+});
+
+const ProfitMarginWidget = dynamic(() => import('@/components/ProfitMarginWidget').then(mod => mod.ProfitMarginWidget), {
+  ssr: false,
+  loading: () => <SidebarPanelSkeleton title="Financial Margins" className="min-h-[290px]" />,
+});
 
 // ---------------------------------------------------------------------------
 // Sparkline
@@ -85,6 +121,8 @@ const WS_BASE = API_BASE.replace(/^http/, 'ws');
 // ---------------------------------------------------------------------------
 
 export default function CityTwinPage() {
+  const [startMode, setStartMode] = useState<StartMode>('smooth');
+  const [liveFeedEnabled, setLiveFeedEnabled] = useState(false);
   const [cityState, setCityState] = useState<CityState>({
     residents: [], hubs: [], traffic: [], zone_congestion: {}, zone_speed_limits: {}, weather: undefined,
   });
@@ -108,6 +146,42 @@ export default function CityTwinPage() {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevHubPricesRef = useRef<Record<string, number>>({});
 
+  // Load persisted start mode preference once on mount.
+  useEffect(() => {
+    try {
+      const persistedMode = window.localStorage.getItem(START_MODE_STORAGE_KEY);
+      if (persistedMode === 'smooth' || persistedMode === 'immediate') {
+        setStartMode(persistedMode);
+      }
+    } catch {
+      // Ignore localStorage failures.
+    }
+  }, []);
+
+  // Persist start mode preference changes.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(START_MODE_STORAGE_KEY, startMode);
+    } catch {
+      // Ignore localStorage failures.
+    }
+  }, [startMode]);
+
+  // Configure live feed start behavior based on selected mode.
+  useEffect(() => {
+    if (liveFeedEnabled) {
+      return;
+    }
+
+    if (startMode === 'immediate') {
+      setLiveFeedEnabled(true);
+      return;
+    }
+
+    const timer = setTimeout(() => setLiveFeedEnabled(true), 4500);
+    return () => clearTimeout(timer);
+  }, [startMode, liveFeedEnabled]);
+
   // --- Derived sparklines ---
   const priceHistory = telemetry.map(t => t.avg_price);
   const queueHistory = telemetry.map(t => t.total_queue);
@@ -116,6 +190,10 @@ export default function CityTwinPage() {
 
   // --- WebSocket ---
   useEffect(() => {
+    if (!liveFeedEnabled) {
+      return;
+    }
+
     let isUnmounting = false;
 
     const connect = () => {
@@ -154,10 +232,11 @@ export default function CityTwinPage() {
       wsRef.current?.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [liveFeedEnabled]);
 
   // --- City-only telemetry from live WS state ---
   useEffect(() => {
+    if (!liveFeedEnabled) return;
     if (!cityState.hubs.length) return;
     const activeHubs = cityState.hubs.filter(h => h.active);
     const avgPrice = activeHubs.length
@@ -177,10 +256,18 @@ export default function CityTwinPage() {
       avg_drag: cityState.residents.length ? cityState.residents.reduce((sum, r) => sum + (r.aero_drag || 0), 0) / cityState.residents.length : 0,
     };
     setTelemetry(prev => [...prev.slice(-119), row]);
-  }, [cityState.hubs, cityState.weather]);
+  }, [cityState.hubs, cityState.weather, liveFeedEnabled]);
 
   // --- Chief decisions polling ---
   useEffect(() => {
+    if (!liveFeedEnabled) {
+      return;
+    }
+
+    let idleId: number | null = null;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     const fetchDecisions = async () => {
       try {
         const res = await fetch(`${API_BASE}/city/decisions?limit=8`);
@@ -218,16 +305,36 @@ export default function CityTwinPage() {
         }
       } catch { /* ignore */ }
     };
-    fetchDecisions();
-    fetchAnalytics();
-    fetchOracleMode();
-    const interval = setInterval(() => {
-      fetchDecisions();
-      fetchAnalytics();
-      fetchOracleMode();
-    }, 8_000);
-    return () => clearInterval(interval);
-  }, []);
+
+    const startPolling = () => {
+      void fetchDecisions();
+      void fetchAnalytics();
+      void fetchOracleMode();
+      intervalId = setInterval(() => {
+        void fetchDecisions();
+        void fetchAnalytics();
+        void fetchOracleMode();
+      }, 8_000);
+    };
+
+    if ('requestIdleCallback' in window) {
+      idleId = window.requestIdleCallback(startPolling, { timeout: 1800 });
+    } else {
+      timerId = setTimeout(startPolling, 350);
+    }
+
+    return () => {
+      if (idleId !== null && 'cancelIdleCallback' in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timerId) {
+        clearTimeout(timerId);
+      }
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [liveFeedEnabled]);
 
   // --- Chat auto-scroll ---
   useEffect(() => {
@@ -311,8 +418,7 @@ export default function CityTwinPage() {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="min-h-screen bg-[#080810] text-white flex flex-col font-sans overflow-hidden"
-      style={{ background: 'radial-gradient(ellipse at 20% 10%, rgba(234,88,12,0.06) 0%, transparent 50%), radial-gradient(ellipse at 80% 90%, rgba(59,130,246,0.06) 0%, transparent 50%), #080810' }}>
+    <div className="city-page-shell min-h-screen text-white flex flex-col font-sans overflow-hidden">
 
       {/* Header */}
       <header className="flex items-center justify-between px-8 py-5 border-b border-white/5 shrink-0 z-10 relative">
@@ -324,11 +430,30 @@ export default function CityTwinPage() {
             </h1>
             <span className="text-slate-500 font-light">— EV + Urban Traffic</span>
           </div>
-          {cityState.weather && (
-            <span className="mt-1 inline-flex items-center gap-1 text-xs text-amber-400/70 bg-amber-400/5 border border-amber-400/10 rounded-full px-3 py-0.5">
-              {cityState.weather}
+          <span className="mt-1 inline-flex min-h-6 min-w-[118px] items-center gap-1 text-xs text-amber-400/70 bg-amber-400/5 border border-amber-400/10 rounded-full px-3 py-0.5">
+            {cityState.weather ?? 'Weather: pending'}
+          </span>
+          <div className="mt-2 flex flex-col items-start">
+            <div className="flex items-center rounded-full border border-white/10 bg-white/5 p-1">
+              <button
+                onClick={() => setStartMode('smooth')}
+                title="Prioritize smooth load"
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${startMode === 'smooth' ? 'bg-orange-500/30 text-orange-200' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Smooth load
+              </button>
+              <button
+                onClick={() => setStartMode('immediate')}
+                title="Start simulation immediately"
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${startMode === 'immediate' ? 'bg-cyan-500/30 text-cyan-200' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Immediate
+              </button>
+            </div>
+            <span className="mt-1 pl-2 text-[10px] font-medium text-slate-500">
+              Preference saved: {startMode === 'smooth' ? 'Smooth load' : 'Immediate'}
             </span>
-          )}
+          </div>
         </div>
         <div className="flex gap-3">
           <button onClick={() => setShowTrails(!showTrails)}
@@ -423,7 +548,7 @@ export default function CityTwinPage() {
               <g key={hub.id} className="transition-all duration-[500ms] ease-out" transform={`translate(${hub.x}, ${hub.y})`}>
                 {hub.active ? (
                   <>
-                    <circle r="8" className="fill-pink-500/10 stroke-pink-500/30 stroke-[0.2] animate-ping" style={{ animationDuration: '3s' }} />
+                    <circle r="8" className="city-hub-pulse fill-pink-500/10 stroke-pink-500/30 stroke-[0.2] animate-ping" />
                     <circle r="5" className="fill-pink-500/20 stroke-pink-500/50 stroke-[0.5]" />
                     <circle r="1.5" className="fill-pink-400" />
                   </>
@@ -543,6 +668,17 @@ export default function CityTwinPage() {
             })()}
           </svg>
 
+          {!liveFeedEnabled && startMode === 'smooth' && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0a0a10]/55 backdrop-blur-[2px]">
+              <button
+                onClick={() => setLiveFeedEnabled(true)}
+                className="rounded-full border border-orange-400/40 bg-orange-500/20 px-5 py-2 text-sm font-semibold text-orange-200 transition-colors hover:bg-orange-500/30"
+              >
+                Start Live Simulation
+              </button>
+            </div>
+          )}
+
           {/* City Oracle Chat */}
           <div className="absolute bottom-6 left-6 w-[360px] h-[450px] flex flex-col rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl shadow-[0_0_30px_rgba(0,0,0,0.5)] overflow-hidden">
             <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 bg-gradient-to-r from-orange-900/40 to-amber-900/40">
@@ -612,10 +748,37 @@ export default function CityTwinPage() {
                   {(avgCongestion * 100).toFixed(0)}%
                 </p>
               </div>
+              {cityState.metrics && (
+                <>
+                  <div className="h-px w-full bg-gradient-to-r from-white/5 to-transparent" />
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-400">Grid Load (Total / EV)</p>
+                    <p className="text-xs font-mono font-bold text-cyan-300">
+                      {cityState.metrics.total_city_grid_load_kw} / {cityState.metrics.ev_power_demand_kw} kW
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-400">CO2 Saved (Displaced)</p>
+                    <p className="text-xs font-mono font-bold text-emerald-400">
+                      {cityState.metrics.co2_saved_kg_h} kg/h
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-400">Avg Battery Health</p>
+                    <p className="text-xs font-mono font-bold text-teal-400">
+                      {(cityState.metrics.avg_fleet_soh * 100).toFixed(1)}% SOH
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
-          <CityScenarioLab apiBase={API_BASE} />
+          <ProfitMarginWidget />
+
+          <div className="min-h-[520px]">
+            <CityScenarioLab apiBase={API_BASE} />
+          </div>
 
           {/* EV Tracker */}
           <div className="p-6 rounded-[2rem] border border-cyan-500/10 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl flex flex-col gap-3">
@@ -688,15 +851,17 @@ export default function CityTwinPage() {
           </div>
 
           {/* Policy Dashboard */}
-          <PolicyDashboard 
-            decisions={decisions} 
-            cityState={cityState} 
-            forecast={forecast}
-            segments={segments}
-            recommendations={recommendations}
-            oracleMode={oracleMode}
-            onToggleMode={toggleOracleMode}
-          />
+          <div className="min-h-[760px]">
+            <PolicyDashboard 
+              decisions={decisions} 
+              cityState={cityState}
+              forecast={forecast}
+              segments={segments}
+              recommendations={recommendations}
+              oracleMode={oracleMode}
+              onToggleMode={toggleOracleMode}
+            />
+          </div>
 
           {/* Hub Markets */}
           <div className="p-6 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl">
@@ -739,10 +904,16 @@ export default function CityTwinPage() {
           </div>
 
           {/* Historical Trends */}
-          <div className="p-6 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl">
+          <div className="min-h-[390px] p-6 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl">
             <h2 className="text-xs font-semibold uppercase tracking-widest mb-4 text-slate-400">Historical Trends</h2>
             {telemetry.length < 2 ? (
-              <p className="text-xs text-slate-600 italic">Collecting data…</p>
+              <div className="animate-pulse space-y-3">
+                <p className="text-xs text-slate-600 italic">Collecting data…</p>
+                <div className="h-10 rounded-xl bg-white/5" />
+                <div className="h-10 rounded-xl bg-white/5" />
+                <div className="h-10 rounded-xl bg-white/5" />
+                <div className="h-10 rounded-xl bg-white/5" />
+              </div>
             ) : (
               <div className="flex flex-col gap-4">
                 <div>

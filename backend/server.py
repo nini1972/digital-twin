@@ -38,6 +38,19 @@ import city_tools
 import city_chat_tools
 from city_scenario_schema import build_city_scenario_schema
 
+# --- NIEUWE PYDANTIC MODELLEN VOOR ENERGIE DATA ---
+
+class CityStatusDetails(BaseModel):
+    kale_stroomprijs_eur_kwh: float
+    geschatte_basis_vraag_kw: float
+    actieve_laders_basis: int
+    net_congestie_risico: str
+
+class EnergyMarketPayload(BaseModel):
+    timestamp: str
+    city_status: CityStatusDetails
+    weather: str  # <-- NIEUW: FastAPI valideert nu ook het inkomende weer
+
 # ---------------------------------------------------------------------------
 # Global Session State for AI Finance Command Center
 # ---------------------------------------------------------------------------
@@ -1389,6 +1402,64 @@ async def simulation_websocket(websocket: WebSocket):
 # ---------------------------------------------------------------------------
 # City Digital Twin endpoints
 # ---------------------------------------------------------------------------
+@app.post("/city")
+async def receive_city_market_data(payload: EnergyMarketPayload):
+    try:
+        status_data = payload.city_status
+        
+        # 1. Update de marktcondities én het weer in de engine
+        if hasattr(city_engine, "update_market_conditions"):
+            city_engine.update_market_conditions(
+                price=status_data.kale_stroomprijs_eur_kwh,
+                demand=status_data.geschatte_basis_vraag_kw,
+                risk=status_data.net_congestie_risico
+            )
+        
+        # NIEUW: Overschrijf het weertype van de Digital Twin live
+        city_engine.weather = payload.weather
+        print(f"🌦 [FastAPI] Weer live gesynchroniseerd naar: {payload.weather}")
+
+        # 2. Database opslag (bestaande save_telemetry)
+        save_telemetry(
+            weather=payload.weather, # <-- Gecorrigeerd: sla het echte weer op!
+            active_hubs=int(status_data.actieve_laders_basis),
+            avg_price=float(status_data.kale_stroomprijs_eur_kwh),
+            total_queue=int(status_data.geschatte_basis_vraag_kw / 22)
+        )
+        
+        # GECORRIGEERD IN server.py (Stap 3):
+        if hasattr(city_engine, "update_market_conditions"):
+            city_engine.update_market_conditions(
+                price=status_data.kale_stroomprijs_eur_kwh,
+                demand=status_data.geschatte_basis_vraag_kw,
+                risk=status_data.net_congestie_risico
+            )
+        # Gecorrigeerd: We halen de timestamp direct uit payload of genereren een fallback
+        from datetime import datetime, timezone
+        current_time = getattr(payload, "timestamp", datetime.now(timezone.utc).isoformat())
+
+        market_event = {
+            "event_type": "market_spike",
+            "price": status_data.kale_stroomprijs_eur_kwh,
+            "risk": status_data.net_congestie_risico,
+            "timestamp": current_time
+        }  # <-- Zorg dat deze sluitaccolade er staat!
+        
+        # Trigger de DemandAnalyzerAgent direct via de in-process bus
+        await bus.publish("CHANNEL_SCOUT_EV", json.dumps(market_event))
+        await bus.publish("CHANNEL_ANALYZER_EV", json.dumps(market_event))
+        
+        
+        return {
+            "status": "success", 
+            "message": "Market data successfully mapped to city telemetry and stored.",
+            "received_at": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        print(f"❌ Fout in /city endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+
 
 @app.post("/city/chat", response_model=ChatResponse)
 async def city_chat(request: ChatRequest):
