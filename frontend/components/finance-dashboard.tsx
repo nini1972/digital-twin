@@ -12,15 +12,11 @@ import {
     Terminal, 
     Layers, 
     Check, 
-    TrendingDown, 
     PieChart, 
     ShieldAlert, 
-    ExternalLink,
     BookOpen,
     Award,
     Send,
-    Smartphone,
-    Mail,
     Clock,
     Activity
 } from 'lucide-react';
@@ -28,6 +24,15 @@ import {
 // ============================================================================
 // Types
 // ============================================================================
+
+interface A2UIComponent {
+    [key: string]: any;
+}
+
+interface A2UISurface {
+    title?: string;
+    components: A2UIComponent[];
+}
 
 interface FinanceDashboardProps {
     financeState: {
@@ -81,7 +86,7 @@ interface FinanceDashboardProps {
             };
         } | null;
     };
-    activeA2UISurface: any;
+    activeA2UISurface: A2UISurface | null;
     onReset: () => Promise<void>;
     onRefresh: () => Promise<void>;
 }

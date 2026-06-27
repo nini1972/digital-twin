@@ -1,5 +1,4 @@
 import sqlite3
-import json
 import os
 from datetime import datetime
 
@@ -73,6 +72,8 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+    # Prune existing database tables on startup to resolve current bloat
+    prune_old_data()
 
 def save_message(session_id: str, role: str, content: str, timestamp: str = None):
     if timestamp is None:
@@ -325,3 +326,39 @@ def clear_agent_decisions() -> int:
     conn.commit()
     conn.close()
     return count
+
+
+def prune_old_data(max_telemetry: int = 5000, max_events: int = 1000, max_decisions: int = 1000):
+    """Keep only the latest rows in telemetry, market_events, and agent_decisions to prevent bloat."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Prune telemetry
+        cursor.execute('''
+            DELETE FROM telemetry 
+            WHERE id NOT IN (
+                SELECT id FROM telemetry ORDER BY id DESC LIMIT ?
+            )
+        ''', (max_telemetry,))
+        
+        # Prune market_events
+        cursor.execute('''
+            DELETE FROM market_events 
+            WHERE id NOT IN (
+                SELECT id FROM market_events ORDER BY id DESC LIMIT ?
+            )
+        ''', (max_events,))
+        
+        # Prune agent_decisions
+        cursor.execute('''
+            DELETE FROM agent_decisions 
+            WHERE id NOT IN (
+                SELECT id FROM agent_decisions ORDER BY id DESC LIMIT ?
+            )
+        ''', (max_decisions,))
+        
+        conn.commit()
+    except Exception as e:
+        print(f"[Database] Pruning error: {e}")
+    finally:
+        conn.close()

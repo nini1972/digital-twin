@@ -32,11 +32,14 @@ class DemandAnalyzerAgent:
     DEMAND_BURST_THRESHOLD = 2
     DEGRADED_FLEET_THRESHOLD = 2
     THERMAL_THROTTLING_THRESHOLD = 2
+    GRID_STRESS_THRESHOLD = 2
+    VECTOR_STORE_COOLDOWN_TICKS = 100
 
     def __init__(self):
         self.name = "DemandAnalyzerAgent"
         self._window: Deque[dict] = deque(maxlen=WINDOW_SIZE)
         self.latest_finding: dict | None = None
+        self._last_stored_ticks: dict[str, int] = {}
 
     async def run(self):
         queue = bus.subscribe_local(CHANNEL_SCOUT_EV)
@@ -51,6 +54,13 @@ class DemandAnalyzerAgent:
             except Exception as exc:
                 print(f"[DemandAnalyzerAgent] error: {exc}")
                 await asyncio.sleep(1)
+
+    def _store_vector_with_cooldown(self, pattern_type: str, text: str, metadata: dict = None):
+        current_tick = self._window[-1].get("tick", 0) if self._window else 0
+        last_stored = self._last_stored_ticks.get(pattern_type, -self.VECTOR_STORE_COOLDOWN_TICKS)
+        if current_tick - last_stored >= self.VECTOR_STORE_COOLDOWN_TICKS:
+            vector_memory.store(pattern_type, text, metadata)
+            self._last_stored_ticks[pattern_type] = current_tick
 
     async def _analyze(self):
         saturation_events = [e for e in self._window if e.get("event") == "hub_saturation"]
@@ -72,7 +82,7 @@ class DemandAnalyzerAgent:
                 "ts": datetime.now().isoformat(),
             }
             self.latest_finding = finding
-            vector_memory.store("demand_saturation", text, {"hubs": str(hubs_involved)})
+            self._store_vector_with_cooldown("demand_saturation", text, {"hubs": str(hubs_involved)})
 
         if len(burst_events) >= self.DEMAND_BURST_THRESHOLD:
             max_seeking = max(e.get("seeking_count", 0) for e in burst_events)
@@ -89,7 +99,7 @@ class DemandAnalyzerAgent:
                 "ts": datetime.now().isoformat(),
             }
             self.latest_finding = finding
-            vector_memory.store("demand_burst", text, {"max_seeking": max_seeking})
+            self._store_vector_with_cooldown("demand_burst", text, {"max_seeking": max_seeking})
 
         degraded_events = [e for e in self._window if e.get("event") == "degraded_fleet"]
         if len(degraded_events) >= self.DEGRADED_FLEET_THRESHOLD:
@@ -107,7 +117,7 @@ class DemandAnalyzerAgent:
                 "ts": datetime.now().isoformat(),
             }
             self.latest_finding = finding
-            vector_memory.store("degraded_fleet", text, {"low_soh_count": low_soh_count})
+            self._store_vector_with_cooldown("degraded_fleet", text, {"low_soh_count": low_soh_count})
 
         thermal_events = [e for e in self._window if e.get("event") == "thermal_throttling"]
         if len(thermal_events) >= self.THERMAL_THROTTLING_THRESHOLD:
@@ -127,18 +137,38 @@ class DemandAnalyzerAgent:
                 "ts": datetime.now().isoformat(),
             }
             self.latest_finding = finding
-            vector_memory.store("thermal_throttling", text, {"weather": weather})
+            self._store_vector_with_cooldown("thermal_throttling", text, {"weather": weather})
+
+        grid_stress_events = [e for e in self._window if e.get("event") == "grid_stress"]
+        if len(grid_stress_events) >= self.GRID_STRESS_THRESHOLD:
+            max_price = max(e.get("wholesale_price", 0.0) for e in grid_stress_events)
+            text = (
+                f"[{datetime.now().isoformat()}] Persistent grid energy stress pattern confirmed. "
+                f"{len(grid_stress_events)} events in last {WINDOW_SIZE} ticks. "
+                f"Peak wholesale price: EUR {max_price:.3f}/kWh."
+            )
+            finding = {
+                "type": "grid_stress_pattern",
+                "event_count": len(grid_stress_events),
+                "peak_wholesale_price": max_price,
+                "text": text,
+                "ts": datetime.now().isoformat(),
+            }
+            self.latest_finding = finding
+            self._store_vector_with_cooldown("grid_stress", text, {"peak_wholesale_price": max_price})
 
 
 class CongestionAnalyzerAgent:
     """Reads CHANNEL_SCOUT_TRAFFIC; detects persistent congestion hotspots."""
 
     HOTSPOT_THRESHOLD = 4  # N events for same zone → persistent hotspot
+    VECTOR_STORE_COOLDOWN_TICKS = 100
 
     def __init__(self):
         self.name = "CongestionAnalyzerAgent"
         self._window: Deque[dict] = deque(maxlen=WINDOW_SIZE)
         self.latest_finding: dict | None = None
+        self._last_stored_ticks: dict[str, int] = {}
 
     async def run(self):
         queue = bus.subscribe_local(CHANNEL_SCOUT_TRAFFIC)
@@ -153,6 +183,14 @@ class CongestionAnalyzerAgent:
             except Exception as exc:
                 print(f"[CongestionAnalyzerAgent] error: {exc}")
                 await asyncio.sleep(1)
+
+    def _store_vector_with_cooldown(self, zone: str, text: str):
+        current_tick = self._window[-1].get("tick", 0) if self._window else 0
+        key = f"hotspot_{zone}"
+        last_stored = self._last_stored_ticks.get(key, -self.VECTOR_STORE_COOLDOWN_TICKS)
+        if current_tick - last_stored >= self.VECTOR_STORE_COOLDOWN_TICKS:
+            vector_memory.store("congestion_hotspot", text, {"zone": zone})
+            self._last_stored_ticks[key] = current_tick
 
     async def _analyze(self):
         zone_counts: dict[str, list] = {}
@@ -179,4 +217,4 @@ class CongestionAnalyzerAgent:
                     "ts": datetime.now().isoformat(),
                 }
                 self.latest_finding = finding
-                vector_memory.store("congestion_hotspot", text, {"zone": zone})
+                self._store_vector_with_cooldown(zone, text)

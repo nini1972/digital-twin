@@ -15,6 +15,13 @@ type ScenarioSchemaResponse = {
   actions: Record<string, { example: Record<string, unknown> }>;
 };
 
+interface TrajectoryDataPoint {
+  total_queue: number;
+  avg_price: number;
+  avg_congestion: number;
+  active_hubs: number;
+}
+
 type ScenarioRunResult = {
   status: string;
   recommendation?: string;
@@ -22,8 +29,8 @@ type ScenarioRunResult = {
   applied_actions?: Array<Record<string, unknown>>;
   validation_errors?: string[];
   safety?: { mutates_live_state?: boolean };
-  baseline?: { trajectory?: any[] };
-  scenario?: { trajectory?: any[] };
+  baseline?: { trajectory?: TrajectoryDataPoint[] };
+  scenario?: { trajectory?: TrajectoryDataPoint[] };
 };
 
 type Props = {
@@ -39,7 +46,7 @@ function formatActionLabel(actionType: string) {
   return actionType.replace(/_/g, ' ');
 }
 
-function TrajectoryChart({ baseline, scenario, metric, color, label }: { baseline: any[]; scenario: any[]; metric: string; color: string; label: string }) {
+function TrajectoryChart({ baseline, scenario, metric, color, label }: { baseline: TrajectoryDataPoint[]; scenario: TrajectoryDataPoint[]; metric: keyof TrajectoryDataPoint; color: string; label: string }) {
   if (!baseline?.length || !scenario?.length) return null;
   const values = [...baseline, ...scenario].map(d => d[metric] as number);
   const min = Math.min(...values);
@@ -48,7 +55,7 @@ function TrajectoryChart({ baseline, scenario, metric, color, label }: { baselin
   const w = 260;
   const h = 40;
   
-  const getPts = (data: any[]) => data.map((d, i) => {
+  const getPts = (data: TrajectoryDataPoint[]) => data.map((d, i) => {
     const x = (i / (data.length - 1)) * w;
     const y = h - ((d[metric] - min) / range) * h;
     return `${x},${y}`;

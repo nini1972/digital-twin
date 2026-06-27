@@ -127,15 +127,15 @@ async def execute_midnight_audit():
         # Execute tasks headlessly to simulate a full audit
         ExecutionLog.log("Scout", "Scout Scanning Ledgers", "Starting Trial Balance checks for parent_nv, flanders_bv, france_sas, us_inc...")
         await asyncio.sleep(0.5) # Allow typewriter simulation delay
-        reconcile_res = orchestrator.execute_task("reconcile_ledgers")
+        orchestrator.execute_task("reconcile_ledgers")
         
         ExecutionLog.log("Consolidator", "Performing Eliminations", "Analyzing intercompany sales and fee balances for consolidation matching...")
         await asyncio.sleep(0.5)
-        consolidation_res = orchestrator.execute_task("group_consolidation")
+        orchestrator.execute_task("group_consolidation")
         
         ExecutionLog.log("Auditor", "Auditing Regulatory Rules", "Running compliance checking for IFRS and BGAAP differences...")
         await asyncio.sleep(0.5)
-        compliance_res = orchestrator.execute_task("compliance_audit")
+        orchestrator.execute_task("compliance_audit")
         
         ExecutionLog.log("Chief CFO", "Compiling Audit Briefing", "Aggregating findings into enterprise message card payload alerts.")
         
@@ -1453,7 +1453,7 @@ async def receive_city_market_data(payload: EnergyMarketPayload):
         return {
             "status": "success", 
             "message": "Market data successfully mapped to city telemetry and stored.",
-            "received_at": datetime.utcnow().isoformat()
+            "received_at": datetime.now(timezone.utc).isoformat()
         }
 
     except Exception as e:
@@ -1499,21 +1499,27 @@ async def city_chat(request: ChatRequest):
                 except Exception:
                     function_args = {}
 
-                result_body = city_chat_tools.execute_city_tool_call(
-                    function_name=function_name,
-                    function_args=function_args,
-                    city_engine=city_engine,
-                    helpers={
-                        "forecast_city_load": _forecast_city_load,
-                        "analyze_resident_segments": _analyze_resident_segments,
-                        "evaluate_weather_impact": _evaluate_weather_impact,
-                        "rebalance_hub_load": rebalance_hub_load,
-                        "optimize_hub_pricing": optimize_hub_pricing,
-                        "simulate_scenario": simulate_scenario,
-                    },
-                    runner_path=str(pathlib.Path(__file__).parent / "agents" / "code_runner.py"),
-                    python_executable=sys.executable,
-                )
+                if function_name == "run_python" and not ALLOW_CODE_EXECUTION:
+                    result_body = {
+                        "status": "error",
+                        "message": "Python code execution is disabled on this server by system policy. Recommend other non-python tools."
+                    }
+                else:
+                    result_body = city_chat_tools.execute_city_tool_call(
+                        function_name=function_name,
+                        function_args=function_args,
+                        city_engine=city_engine,
+                        helpers={
+                            "forecast_city_load": _forecast_city_load,
+                            "analyze_resident_segments": _analyze_resident_segments,
+                            "evaluate_weather_impact": _evaluate_weather_impact,
+                            "rebalance_hub_load": rebalance_hub_load,
+                            "optimize_hub_pricing": optimize_hub_pricing,
+                            "simulate_scenario": simulate_scenario,
+                        },
+                        runner_path=str(pathlib.Path(__file__).parent / "agents" / "code_runner.py"),
+                        python_executable=sys.executable,
+                    )
 
                 messages.append({
                     "tool_call_id": tool_call.id,

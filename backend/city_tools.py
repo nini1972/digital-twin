@@ -157,7 +157,20 @@ def analyze_resident_segments(city_engine) -> dict:
         segment_counts[_battery_segment_key(battery)] += 1
         state_counts[state] = state_counts.get(state, 0) + 1
 
-    pressure_index = (state_counts.get("seeking", 0) + state_counts.get("waiting", 0)) / total
+    active_hubs = [h for h in city_engine.hubs if h.active]
+    total_capacity = sum(h.capacity for h in active_hubs)
+    total_queue = sum(h.queue_length for h in active_hubs)
+    
+    if total_capacity > 0:
+        # Hub capacity utilization (queue + charging occupancy / capacity)
+        hub_pressure = total_queue / total_capacity
+    else:
+        hub_pressure = 0.0
+
+    fleet_pressure = (state_counts.get("seeking", 0) + state_counts.get("waiting", 0)) / total
+
+    # Combined pressure index considers both grid queue/chargers load and fleet seeking activity
+    pressure_index = max(hub_pressure, fleet_pressure)
     risk_band = "high" if pressure_index >= 0.4 else "medium" if pressure_index >= 0.2 else "low"
 
     return {

@@ -62,6 +62,67 @@ const parseA2UI = (text: string) => {
     }
 };
 
+interface A2UIComponent {
+    [key: string]: any;
+}
+
+interface A2UISurface {
+    title?: string;
+    components: A2UIComponent[];
+}
+
+interface FinanceState {
+    active_tab: string;
+    selected_company: string;
+    reports_data: Record<string, any>;
+    consolidation_data: Record<string, any>;
+    review_data: Record<string, any>;
+    data_update_data: Record<string, any>;
+    logs: Array<{
+        timestamp: string;
+        agent: string;
+        action: string;
+        details: string;
+        status: string;
+    }>;
+    skills?: Array<{
+        id: string;
+        name: string;
+        description: string;
+        version: string;
+        category: string;
+        requires_tools: string[];
+        procedure: string;
+        filename: string;
+    }>;
+    midnight_audit_run?: {
+        timestamp: string;
+        status: string;
+        violations_found: number;
+        alerts: Array<{
+            id: string;
+            severity: string;
+            title: string;
+            message: string;
+            reremediation?: string;
+            remediation?: string;
+        }>;
+        integrations: {
+            teams: {
+                title: string;
+                adaptive_card: any;
+            };
+            outlook: {
+                subject: string;
+                html_body: string;
+            };
+            whatsapp: {
+                message: string;
+            };
+        };
+    } | null;
+}
+
 export default function Twin() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
@@ -73,7 +134,7 @@ export default function Twin() {
     const avatarTiltRef = useRef<HTMLDivElement>(null);
 
     // AI Finance Specialist State
-    const [financeState, setFinanceState] = useState<any>({
+    const [financeState, setFinanceState] = useState<FinanceState>({
         active_tab: "reports",
         selected_company: "parent_nv",
         reports_data: {},
@@ -82,7 +143,7 @@ export default function Twin() {
         data_update_data: {},
         logs: []
     });
-    const [activeA2UISurface, setActiveA2UISurface] = useState<any>(null);
+    const [activeA2UISurface, setActiveA2UISurface] = useState<A2UISurface | null>(null);
     const [welcomePhase, setWelcomePhase] = useState<
         "text" | "fade" | "video" | "avatar" | "avatar-fade-out" | "hidden"
     >("text");

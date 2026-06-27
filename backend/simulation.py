@@ -63,15 +63,24 @@ class ChargingHubAgent(Agent):
         if resident_id in self.waiting_queue:
             self.waiting_queue.remove(resident_id)
 
-    def update(self):
+    def update(self, engine=None):
         if not self.active:
             return
         # Autonomous pricing logic based on demand
         demand = self.queue_length
-        if demand > 2:
-            self.price += 0.01  # Increase price if busy
-        elif demand == 0 and self.price > 0.15:
-            self.price -= 0.01  # Lower price to attract customers
+        
+        # Determine the price floor based on wholesale rate
+        floor_price = 0.15
+        if engine is not None and hasattr(engine, "current_market_price"):
+            # Enforce floor: wholesale cost + small retail margin (e.g. 0.02 EUR/kWh)
+            floor_price = max(0.15, getattr(engine, "current_market_price", 0.10) + 0.02)
+
+        if self.price < floor_price:
+            self.price = floor_price  # Instantly adjust up to avoid selling at a loss
+        elif demand > 2:
+            self.price = min(0.80, self.price + 0.01)  # Increase price if busy
+        elif demand == 0 and self.price > floor_price:
+            self.price = max(floor_price, self.price - 0.01)  # Lower price, but respect the floor
 
 
 class ResidentAgent(Agent):

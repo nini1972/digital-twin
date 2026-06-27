@@ -24,6 +24,50 @@ type Hub = {
 
 type TrafficAgent = { id: string; x: number; y: number };
 
+type SimulationMetrics = {
+  total_city_grid_load_kw: number;
+  ev_power_demand_kw: number;
+  co2_saved_kg_h: number;
+  avg_fleet_soh: number;
+};
+
+type ForecastData = {
+  horizon_ticks: number;
+  weather: string;
+  projected_total_queue: number;
+  projected_avg_price: number;
+  projected_hotspots: { zone: string; congestion: number }[];
+  confidence: number;
+  recommendations: string[];
+};
+
+type SegmentDetails = {
+  count: number;
+  ratio: number;
+};
+
+type SegmentData = {
+  residents: number;
+  battery_segments: {
+    battery_critical: SegmentDetails;
+    battery_low: SegmentDetails;
+    battery_mid: SegmentDetails;
+    battery_high: SegmentDetails;
+  };
+  state_segments: Record<string, SegmentDetails>;
+  charging_pressure_index: number;
+  demand_risk_band: 'low' | 'medium' | 'high';
+};
+
+type LiveTrafficEvent = {
+  id: string;
+  event_type: 'accident' | 'queue';
+  description: string;
+  x: number;
+  y: number;
+  zone_key: string;
+};
+
 type CityState = {
   residents: Resident[];
   hubs: Hub[];
@@ -31,7 +75,8 @@ type CityState = {
   zone_congestion: Record<string, number>;
   zone_speed_limits: Record<string, number>;
   weather?: string;
-  metrics?: any;
+  metrics?: SimulationMetrics;
+  live_traffic_events?: LiveTrafficEvent[];
 };
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -98,16 +143,7 @@ function Sparkline({ values, color = '#60a5fa' }: { values: number[]; color?: st
   );
 }
 
-// ---------------------------------------------------------------------------
-// Decision type badge colour
-// ---------------------------------------------------------------------------
 
-const DECISION_COLORS: Record<string, string> = {
-  demand_response: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-  capacity_expansion: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
-  traffic_rerouting: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
-  status_nominal: 'bg-green-500/20 text-green-300 border-green-500/30',
-};
 
 // ---------------------------------------------------------------------------
 // API base URL
@@ -124,7 +160,7 @@ export default function CityTwinPage() {
   const [startMode, setStartMode] = useState<StartMode>('smooth');
   const [liveFeedEnabled, setLiveFeedEnabled] = useState(false);
   const [cityState, setCityState] = useState<CityState>({
-    residents: [], hubs: [], traffic: [], zone_congestion: {}, zone_speed_limits: {}, weather: undefined,
+    residents: [], hubs: [], traffic: [], zone_congestion: {}, zone_speed_limits: {}, weather: undefined, live_traffic_events: [],
   });
   const [showTrails, setShowTrails] = useState(true);
   const [showResidentIds, setShowResidentIds] = useState(true);
@@ -136,10 +172,11 @@ export default function CityTwinPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetryRow[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
-  const [forecast, setForecast] = useState<any>(null);
-  const [segments, setSegments] = useState<any>(null);
+  const [forecast, setForecast] = useState<ForecastData | null>(null);
+  const [segments, setSegments] = useState<SegmentData | null>(null);
   const [recommendations, setRecommendations] = useState<string[]>([]);
   const [oracleMode, setOracleMode] = useState<'advisor' | 'autopilot'>('advisor');
+  const isTogglingRef = useRef(false);
   const [hoveredResidentId, setHoveredResidentId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -256,7 +293,7 @@ export default function CityTwinPage() {
       avg_drag: cityState.residents.length ? cityState.residents.reduce((sum, r) => sum + (r.aero_drag || 0), 0) / cityState.residents.length : 0,
     };
     setTelemetry(prev => [...prev.slice(-119), row]);
-  }, [cityState.hubs, cityState.weather, liveFeedEnabled]);
+  }, [cityState.hubs, cityState.weather, cityState.residents, liveFeedEnabled]);
 
   // --- Chief decisions polling ---
   useEffect(() => {
@@ -270,7 +307,7 @@ export default function CityTwinPage() {
 
     const fetchDecisions = async () => {
       try {
-        const res = await fetch(`${API_BASE}/city/decisions?limit=8`);
+        const res = await fetch(`${API_BASE}/city/decisions?limit=8`, { credentials: 'include' });
         if (res.ok) {
           const d = await res.json();
           const rows: Decision[] = d.decisions ?? [];
@@ -287,9 +324,9 @@ export default function CityTwinPage() {
     const fetchAnalytics = async () => {
       try {
         const [fRes, sRes, rRes] = await Promise.all([
-          fetch(`${API_BASE}/city/forecast?horizon=30`),
-          fetch(`${API_BASE}/city/segments`),
-          fetch(`${API_BASE}/city/recommendations`)
+          fetch(`${API_BASE}/city/forecast?horizon=30`, { credentials: 'include' }),
+          fetch(`${API_BASE}/city/segments`, { credentials: 'include' }),
+          fetch(`${API_BASE}/city/recommendations`, { credentials: 'include' })
         ]);
         if (fRes.ok) setForecast(await fRes.json());
         if (sRes.ok) setSegments(await sRes.json());
@@ -297,8 +334,9 @@ export default function CityTwinPage() {
       } catch { /* ignore */ }
     };
     const fetchOracleMode = async () => {
+      if (isTogglingRef.current) return;
       try {
-        const res = await fetch(`${API_BASE}/city/oracle/mode`);
+        const res = await fetch(`${API_BASE}/city/oracle/mode`, { credentials: 'include' });
         if (res.ok) {
           const data = await res.json();
           setOracleMode(data.mode);
@@ -362,6 +400,7 @@ export default function CityTwinPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMsg, session_id: sessionId }),
+        credentials: 'include',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -375,15 +414,30 @@ export default function CityTwinPage() {
   };
 
   const toggleOracleMode = async () => {
+    if (isTogglingRef.current) return;
+    isTogglingRef.current = true;
     const newMode = oracleMode === 'advisor' ? 'autopilot' : 'advisor';
     setOracleMode(newMode);
     try {
-      await fetch(`${API_BASE}/city/oracle/mode`, {
+      const res = await fetch(`${API_BASE}/city/oracle/mode`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: newMode }),
+        credentials: 'include',
       });
-    } catch { /* ignore */ }
+      if (res.ok) {
+        const data = await res.json();
+        setOracleMode(data.mode);
+      } else {
+        setOracleMode(oracleMode);
+      }
+    } catch {
+      setOracleMode(oracleMode);
+    } finally {
+      setTimeout(() => {
+        isTogglingRef.current = false;
+      }, 1500);
+    }
   };
 
   // ---------------------------------------------------------------------------
@@ -513,6 +567,45 @@ export default function CityTwinPage() {
                 );
               })
             )}
+
+            {/* Live Belgian Traffic Incidents Overlay (pulsing orange border + warning symbol) */}
+            {cityState.live_traffic_events?.map(ev => {
+              const [zx, zy] = ev.zone_key.split(',').map(Number);
+              const isAccident = ev.event_type === 'accident';
+              return (
+                <g key={`live-traffic-${ev.id}`}>
+                  {/* Pulsing overlay rect */}
+                  <rect
+                    x={zx * 20} y={zy * 20}
+                    width={20} height={20}
+                    fill={isAccident ? 'rgba(239,68,68,0.06)' : 'rgba(249,115,22,0.06)'}
+                    stroke={isAccident ? '#ef4444' : '#f97316'}
+                    strokeWidth="0.5"
+                    strokeDasharray="2,2"
+                    rx="0.5"
+                    className="animate-pulse"
+                  />
+                  {/* Caution Triangle Icon */}
+                  <g transform={`translate(${zx * 20 + 3.5}, ${zy * 20 + 3.5})`}>
+                    <polygon
+                      points="0,-2 2,1.5 -2,1.5"
+                      fill={isAccident ? '#ef4444' : '#f97316'}
+                      stroke="#fff"
+                      strokeWidth="0.2"
+                    />
+                    <text
+                      y="1"
+                      textAnchor="middle"
+                      fill="#fff"
+                      fontSize="2"
+                      fontWeight="bold"
+                    >
+                      !
+                    </text>
+                  </g>
+                </g>
+              );
+            })}
 
             {/* Signal Timing Throttle Overlay (blue = Oracle-controlled speed limit) */}
             {Object.entries(cityState.zone_speed_limits ?? {}).map(([key, mult]) => {
@@ -774,6 +867,37 @@ export default function CityTwinPage() {
             </div>
           </div>
 
+          {/* Live Belgian Traffic Incidents Panel */}
+          <div className="p-6 rounded-[2rem] border border-orange-500/10 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-orange-400">Flanders Traffic Feed</h2>
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-medium border border-emerald-500/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live Sync
+              </div>
+            </div>
+            <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+              {!cityState.live_traffic_events || cityState.live_traffic_events.length === 0 ? (
+                <p className="text-xs text-slate-500 italic">No active traffic incidents detected in Flanders.</p>
+              ) : (
+                cityState.live_traffic_events.map((ev) => (
+                  <div key={ev.id} className="p-3 rounded-xl border border-white/5 bg-white/[0.01] hover:bg-white/[0.03] transition-colors flex gap-2">
+                    <span className="text-xs mt-0.5 shrink-0">
+                      {ev.event_type === 'accident' ? '🚨' : '🚗'}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold text-slate-200 uppercase">{ev.event_type}</p>
+                        <span className="text-[10px] font-mono text-slate-500">Zone {ev.zone_key}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1 leading-normal">{ev.description}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
           <ProfitMarginWidget />
 
           <div className="min-h-[520px]">
@@ -860,6 +984,7 @@ export default function CityTwinPage() {
               recommendations={recommendations}
               oracleMode={oracleMode}
               onToggleMode={toggleOracleMode}
+              telemetryHistory={telemetry}
             />
           </div>
 

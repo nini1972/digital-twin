@@ -664,3 +664,25 @@ The deploy workflow reads `AWS_ROLE_ARN` from a GitHub environment secret. If it
 - **Lambda packaging** — `backend/deploy.py` runs dependencies through the official AWS Lambda Python 3.12 Docker image to ensure binary compatibility, then zips everything into `lambda-deployment.zip`.
 - **Mangum adapter** — `lambda_handler.py` wraps the FastAPI app with [Mangum](https://mangum.fastapiexpert.com/), which translates API Gateway HTTP events into ASGI calls.
 - **CloudFront SPA routing** — a custom error response maps all 404s back to `index.html` so Next.js client-side routing works correctly.
+
+
+
+Coding capabilitie for Oracle Agent
+How to Enable Code Execution:
+If you want to allow the Oracle to run Python scripts for its calculations, restart your backend server with the environment variable set to true.
+
+In PowerShell:
+powershell
+
+
+$env:ALLOW_CODE_EXECUTION="true"; uv run uvicorn server:app --reload
+In Command Prompt (cmd):
+cmd
+
+
+set ALLOW_CODE_EXECUTION=true && uv run uvicorn server:app --reload
+In Bash / Linux / macOS:
+bash
+
+
+ALLOW_CODE_EXECUTION=true uv run uvicorn server:app --reload

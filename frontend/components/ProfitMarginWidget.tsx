@@ -13,9 +13,15 @@ interface WebSocketState {
   metrics: SimulationMetrics;
 }
 
+interface MarginHistoryPoint {
+  time: string;
+  winst_per_uur: number;
+  marge: number;
+}
+
 export const ProfitMarginWidget: React.FC = () => {
   const [currentMetrics, setCurrentMetrics] = useState<SimulationMetrics | null>(null);
-  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [historyData, setHistoryData] = useState<MarginHistoryPoint[]>([]);
 
   useEffect(() => {
     const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';

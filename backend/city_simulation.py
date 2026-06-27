@@ -87,6 +87,11 @@ class CitySimulationEngine(SimulationEngine):
         self.zone_congestion: dict[str, float] = {}
         # zone_key → speed multiplier (1.0 = normal, <1.0 = throttled by signal timing)
         self.zone_speed_limits: dict[str, float] = {}
+        # zone_key → speed multiplier from real-world Belgian traffic incidents
+        self.traffic_incident_speed_limits: dict[str, float] = {}
+        # Live Belgian traffic events list
+        self.live_traffic_events: List[dict] = []
+        self.last_traffic_update_tick: int = 0
         # Callbacks invoked after each tick: (state_dict, tick_counter) → None
         self.agent_subscribers: List[Callable] = []
         
@@ -190,6 +195,8 @@ class CitySimulationEngine(SimulationEngine):
         
         # --- NIEUW: Voeg de metrics toe zodat de ProfitMarginWidget ze ontvangt! ---
         state["metrics"] = self.get_city_metrics()
+        # --- NIEUW: Voeg live Belgische verkeersincidenten toe ---
+        state["live_traffic_events"] = self.live_traffic_events
         return state
 
     def get_city_metrics(self) -> dict:
@@ -292,12 +299,29 @@ class CitySimulationEngine(SimulationEngine):
         }
 
 
+    async def _update_belgian_traffic(self, current_tick: int):
+        try:
+            from belgian_traffic import fetch_belgian_traffic
+            events = await fetch_belgian_traffic()
+            self.live_traffic_events = events
+            self.last_traffic_update_tick = current_tick
+            
+            # Rebuild incident-based speed limits
+            new_limits = {}
+            for ev in events:
+                zk = ev["zone_key"]
+                severity = 0.3 if ev["event_type"] == "accident" else 0.5
+                new_limits[zk] = min(new_limits.get(zk, 1.0), severity)
+            self.traffic_incident_speed_limits = new_limits
+        except Exception as e:
+            print(f"[CityEngine] Belgian traffic update error: {e}")
+
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
 
     async def run(self):
-        from database import save_telemetry, save_market_event
+        from database import save_telemetry, save_market_event, prune_old_data
 
         self.running = True
         tick_counter = 0
@@ -305,12 +329,17 @@ class CitySimulationEngine(SimulationEngine):
         while self.running:
             tick_counter += 1
 
+            # --- Periodically update Belgian Traffic Open Data (every 120 ticks = 1 min) ---
+            if tick_counter == 1 or (tick_counter - self.last_traffic_update_tick >= 120):
+                if not getattr(self, "_traffic_fetching_task", None) or self._traffic_fetching_task.done():
+                    self._traffic_fetching_task = asyncio.create_task(self._update_belgian_traffic(tick_counter))
+
             # --- Traffic layer ---
             for t in self.traffic_agents:
-                # Apply per-zone signal timing multiplier before movement
-                t.speed_multiplier = self.zone_speed_limits.get(
-                    self._zone_key(t.x, t.y), 1.0
-                )
+                zk = self._zone_key(t.x, t.y)
+                manual_mult = self.zone_speed_limits.get(zk, 1.0)
+                incident_mult = self.traffic_incident_speed_limits.get(zk, 1.0)
+                t.speed_multiplier = min(manual_mult, incident_mult)
                 t.update(self)
             self._compute_congestion()
 
@@ -335,7 +364,7 @@ class CitySimulationEngine(SimulationEngine):
             total_queue = 0
             total_price = 0.0
             for hub in self.hubs:
-                hub.update()
+                hub.update(self)
                 if hub.active:
                     active_hubs_count += 1
                     total_queue += hub.queue_length
@@ -408,6 +437,10 @@ class CitySimulationEngine(SimulationEngine):
             # --- Telemetry (every 10 ticks) ---
             if tick_counter % 10 == 0:
                 save_telemetry(self.weather, active_hubs_count, avg_price, total_queue)
+
+            # --- Database pruning (every 1000 ticks) ---
+            if tick_counter % 1000 == 0:
+                prune_old_data()
 
             # --- Notify Scout / agent subscribers ---
             if self.agent_subscribers:
