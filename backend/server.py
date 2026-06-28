@@ -20,7 +20,7 @@ import boto3
 from botocore.exceptions import ClientError
 from openai import OpenAI
 from context import prompt
-from simulation import engine
+from simulation import engine, WEATHER_CONFIG
 from city_simulation import city_engine
 from city_context import city_prompt
 from redis_bus import bus
@@ -714,8 +714,9 @@ def _normalize_scenario_action(raw: dict, index: int) -> tuple[Optional[dict], O
 
     if action_type == "set_weather":
         weather = str(raw.get("weather", "sunny")).strip().lower()
-        if weather not in {"sunny", "storm", "extreme_heat"}:
-            return None, f"scenario_actions[{index}].weather must be sunny, storm, or extreme_heat"
+        if weather not in WEATHER_CONFIG:
+            allowed = ", ".join(sorted(WEATHER_CONFIG.keys()))
+            return None, f"scenario_actions[{index}].weather must be one of: {allowed}"
         normalized["weather"] = weather
     elif action_type in {"add_city_hub", "add_city_resident", "add_city_traffic"}:
         normalized["count"] = int(_clamp(float(raw.get("count", 1)), 1, 20))
@@ -969,7 +970,7 @@ def _apply_scenario_actions(state: dict, actions: list[dict]) -> list[dict]:
         action_type = str(raw.get("type", "")).strip().lower()
         if action_type == "set_weather":
             weather = str(raw.get("weather", "sunny")).strip().lower()
-            if weather in {"sunny", "storm", "extreme_heat"}:
+            if weather in WEATHER_CONFIG:
                 state["weather"] = weather
                 applied.append({"type": "set_weather", "weather": weather})
         elif action_type == "add_city_hub":
@@ -1075,7 +1076,7 @@ def _run_projection(state: dict, horizon_ticks: int, runs: int) -> dict:
         traffic = sim.get("traffic", [])
         weather = str(sim.get("weather", "sunny"))
 
-        weather_multiplier = {"sunny": 1.0, "storm": 1.3, "extreme_heat": 1.45}.get(weather, 1.0)
+        weather_multiplier = WEATHER_CONFIG.get(weather, WEATHER_CONFIG["sunny"]).get("drain_multiplier", 1.0)
 
         for _tick in range(horizon_ticks):
             active_hubs = [h for h in hubs if h.get("active", True)]
@@ -1696,7 +1697,7 @@ async def city_scenario_schema():
             "set_weather": {
                 "required": ["type", "weather"],
                 "optional": [],
-                "constraints": {"weather": ["sunny", "storm", "extreme_heat"]},
+                "constraints": {"weather": list(sorted(WEATHER_CONFIG.keys()))},
                 "example": {"type": "set_weather", "weather": "storm"},
             },
             "add_city_hub": {

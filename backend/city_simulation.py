@@ -10,7 +10,7 @@ import random
 import asyncio
 from typing import List, Callable
 
-from simulation import SimulationEngine, ResidentAgent, ChargingHubAgent
+from simulation import SimulationEngine, ResidentAgent, ChargingHubAgent, WEATHER_CONFIG
 from pathfinding import astar_path
 
 
@@ -253,12 +253,8 @@ class CitySimulationEngine(SimulationEngine):
         total_city_grid_load_kw = ev_power_demand_kw + city_base_demand_kw
 
         # --- NIEUWE MILIEU-IMPACT METRIEKEN ---
-        if self.weather == "sunny":
-            grid_co2_intensity = 80.0  # Hoog aandeel zonne-energie
-        elif self.weather in ["storm", "extreme_cold"]:
-            grid_co2_intensity = 240.0 # Hoog aandeel fossiele back-up (verwarming)
-        else:
-            grid_co2_intensity = 150.0 # Standaard Belgische grid baseline
+        w_config = WEATHER_CONFIG.get(self.weather, WEATHER_CONFIG["sunny"])
+        grid_co2_intensity = w_config["grid_co2_intensity"]
             
         ev_co2_emissions_kg_h = (ev_power_demand_kw * grid_co2_intensity) / 1000.0
         traffic_co2_emissions_kg_h = len(self.traffic_agents) * 0.12 * (1.0 + avg_congestion * 1.5)

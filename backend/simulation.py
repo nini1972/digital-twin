@@ -4,6 +4,106 @@ from enum import Enum
 from typing import List
 from pathfinding import astar_path
 
+WEATHER_CONFIG = {
+    "sunny": {
+        "hvac_drain": 0.05,
+        "ambient_temp": 20.0,
+        "charge_multiplier": 1.0,
+        "drain_multiplier": 1.0,
+        "evaluate_drain": 0.2,
+        "evaluate_charge": 5.0,
+        "city_factor": 1.0,
+        "grid_co2_intensity": 80.0,
+        "seek_threshold": 30,
+        "radius_multiplier": 1.0,
+    },
+    "clear_night": {
+        "hvac_drain": 0.05,
+        "ambient_temp": 20.0,
+        "charge_multiplier": 1.0,
+        "drain_multiplier": 1.0,
+        "evaluate_drain": 0.2,
+        "evaluate_charge": 5.0,
+        "city_factor": 1.0,
+        "grid_co2_intensity": 150.0,
+        "seek_threshold": 30,
+        "radius_multiplier": 1.0,
+    },
+    "storm": {
+        "hvac_drain": 0.05,
+        "ambient_temp": 10.0,
+        "charge_multiplier": 0.6,
+        "drain_multiplier": 1.3,
+        "evaluate_drain": 0.5,
+        "evaluate_charge": 2.0,
+        "city_factor": 1.35,
+        "grid_co2_intensity": 240.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "extreme_heat": {
+        "hvac_drain": 0.15,
+        "ambient_temp": 35.0,
+        "charge_multiplier": 0.8,
+        "drain_multiplier": 1.45,
+        "evaluate_drain": 0.8,
+        "evaluate_charge": 4.0,
+        "city_factor": 1.5,
+        "grid_co2_intensity": 150.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "extreme_cold": {
+        "hvac_drain": 0.15,
+        "ambient_temp": -5.0,
+        "charge_multiplier": 0.6,
+        "drain_multiplier": 1.2,
+        "evaluate_drain": 0.4,
+        "evaluate_charge": 3.0,
+        "city_factor": 1.2,
+        "grid_co2_intensity": 240.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "winter": {
+        "hvac_drain": 0.15,
+        "ambient_temp": -5.0,
+        "charge_multiplier": 0.6,
+        "drain_multiplier": 1.2,
+        "evaluate_drain": 0.4,
+        "evaluate_charge": 3.0,
+        "city_factor": 1.2,
+        "grid_co2_intensity": 240.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "snow": {
+        "hvac_drain": 0.12,
+        "ambient_temp": -2.0,
+        "charge_multiplier": 0.5,
+        "drain_multiplier": 1.35,
+        "evaluate_drain": 0.6,
+        "evaluate_charge": 2.5,
+        "city_factor": 1.4,
+        "grid_co2_intensity": 240.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "rain": {
+        "hvac_drain": 0.05,
+        "ambient_temp": 12.0,
+        "charge_multiplier": 0.9,
+        "drain_multiplier": 1.1,
+        "evaluate_drain": 0.3,
+        "evaluate_charge": 4.5,
+        "city_factor": 1.1,
+        "grid_co2_intensity": 150.0,
+        "seek_threshold": 30,
+        "radius_multiplier": 1.0,
+    }
+}
+
+
 class ResidentState(Enum):
     DRIVING = "driving"
     SEEKING = "seeking"
@@ -147,17 +247,10 @@ class ResidentAgent(Agent):
         if hasattr(engine, 'get_congestion_for'):
             congestion = engine.get_congestion_for(self.x, self.y)
 
-        # Base HVAC drain (idle drain)
-        hvac_drain = 0.05
-        ambient_temp = 20.0
-        if weather == "extreme_cold":
-            hvac_drain = 0.15
-            ambient_temp = -5.0
-        elif weather == "extreme_heat":
-            hvac_drain = 0.15
-            ambient_temp = 35.0
-        elif weather == "storm":
-            ambient_temp = 10.0
+        # Retrieve weather configuration (default to nominal sunny settings if weather is unrecognized)
+        w_config = WEATHER_CONFIG.get(weather, WEATHER_CONFIG["sunny"])
+        hvac_drain = w_config["hvac_drain"]
+        ambient_temp = w_config["ambient_temp"]
 
         # Thermal dynamics (slowly adjust to ambient)
         self.battery_temperature += (ambient_temp - self.battery_temperature) * 0.05
@@ -179,10 +272,7 @@ class ResidentAgent(Agent):
                 charge_rate *= 0.5
             
             # Weather impacts on charging (Coldgate & Thermal Throttling)
-            if weather == "extreme_cold":
-                charge_rate *= 0.6
-            elif weather == "extreme_heat":
-                charge_rate *= 0.8
+            charge_rate *= w_config["charge_multiplier"]
             
             # Charging heats up the battery
             self.battery_temperature += 0.5
@@ -267,13 +357,9 @@ class ResidentAgent(Agent):
         # Recompute percentage for threshold checks
         battery_percentage = (self.battery / self.battery_capacity) * 100
 
-        # Determine battery threshold and search radius multiplier based on weather
-        if weather in ("storm", "extreme_heat"):
-            seek_threshold = 40
-            radius_multiplier = 2.0
-        else:
-            seek_threshold = 30
-            radius_multiplier = 1.0
+        # Determine battery threshold and search radius multiplier based on weather configuration
+        seek_threshold = w_config["seek_threshold"]
+        radius_multiplier = w_config["radius_multiplier"]
 
         # Seek charge if battery percentage is below threshold
         if battery_percentage < seek_threshold and self.state == ResidentState.DRIVING:

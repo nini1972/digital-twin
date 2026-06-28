@@ -56,8 +56,10 @@ def get_real_production_weather():
         res = requests.get(url, params=params, timeout=5).json()
         
         current_data = res.get("current_weather", {})
-        code = current_data.get("weather_code", 0)
+        code = current_data.get("weathercode", current_data.get("weather_code", 0))
         temp = current_data.get("temperature", 15.0)
+        
+        is_day = current_data.get("is_day", 1)
         
         # WMO Code mapping conform open-meteo docs naar uw simulator enums
         if code in [95, 96, 99]: 
@@ -70,7 +72,7 @@ def get_real_production_weather():
             return "extreme_heat"
         elif temp < 0: 
             return "winter"
-        return "sunny"
+        return "sunny" if is_day == 1 else "clear_night"
     
     except Exception as e:
         print(f"[Open-Meteo Error] Fallback naar sunny: {e}")
