@@ -19,7 +19,7 @@ WEATHER_CONFIG = {
     },
     "clear_night": {
         "hvac_drain": 0.05,
-        "ambient_temp": 20.0,
+        "ambient_temp": 10.0,
         "charge_multiplier": 1.0,
         "drain_multiplier": 1.0,
         "evaluate_drain": 0.2,
@@ -67,7 +67,7 @@ WEATHER_CONFIG = {
     },
     "winter": {
         "hvac_drain": 0.15,
-        "ambient_temp": -5.0,
+        "ambient_temp": 0.0,
         "charge_multiplier": 0.6,
         "drain_multiplier": 1.2,
         "evaluate_drain": 0.4,
