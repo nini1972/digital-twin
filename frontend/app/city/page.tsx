@@ -74,6 +74,7 @@ type CityState = {
   traffic: TrafficAgent[];
   zone_congestion: Record<string, number>;
   zone_speed_limits: Record<string, number>;
+  traffic_incident_speed_limits?: Record<string, number>;
   weather?: string;
   metrics?: SimulationMetrics;
   live_traffic_events?: LiveTrafficEvent[];
@@ -160,7 +161,7 @@ export default function CityTwinPage() {
   const [startMode, setStartMode] = useState<StartMode>('smooth');
   const [liveFeedEnabled, setLiveFeedEnabled] = useState(false);
   const [cityState, setCityState] = useState<CityState>({
-    residents: [], hubs: [], traffic: [], zone_congestion: {}, zone_speed_limits: {}, weather: undefined, live_traffic_events: [],
+    residents: [], hubs: [], traffic: [], zone_congestion: {}, zone_speed_limits: {}, traffic_incident_speed_limits: {}, weather: undefined, live_traffic_events: [],
   });
   const [showTrails, setShowTrails] = useState(true);
   const [showResidentIds, setShowResidentIds] = useState(true);

@@ -144,5 +144,34 @@ class TestBelgianTraffic(unittest.TestCase):
         self.assertIn("live_traffic_events", state)
         self.assertEqual(len(state["live_traffic_events"]), 2)
 
+    def test_resident_agent_respects_speed_limits(self):
+        from simulation import ResidentAgent, ResidentState
+        from city_simulation import CitySimulationEngine
+        
+        engine = CitySimulationEngine()
+        res = ResidentAgent("res_test_speed")
+        res.state = ResidentState.DRIVING
+        res.x = 30.0  # zone_key "1,2" (30/20=1, 50/20=2)
+        res.y = 50.0
+        res.path = [(32.0, 50.0)]
+        res.base_speed = 2.0
+        
+        # Test base speed with no restrictions
+        with patch("random.uniform", return_value=1.0):
+            res.update([], engine)
+            self.assertAlmostEqual(res.speed, 2.0)
+            
+        # Add manual speed limit in zone "1,2"
+        engine.zone_speed_limits["1,2"] = 0.5
+        with patch("random.uniform", return_value=1.0):
+            res.update([], engine)
+            self.assertAlmostEqual(res.speed, 1.0)
+            
+        # Add incident speed limit in zone "1,2"
+        engine.traffic_incident_speed_limits["1,2"] = 0.3
+        with patch("random.uniform", return_value=1.0):
+            res.update([], engine)
+            self.assertAlmostEqual(res.speed, 0.6)
+
 if __name__ == "__main__":
     unittest.main()

@@ -308,12 +308,21 @@ class ResidentAgent(Agent):
             elif self.state == ResidentState.SEEKING:
                 self._compute_path(engine, self.destination_x, self.destination_y)
 
-        # Dynamic speed calculation based on congestion and randomness
+        # Dynamic speed calculation based on congestion, speed limits, and randomness
         if self.state in (ResidentState.DRIVING, ResidentState.SEEKING):
             speed_variance = random.uniform(0.85, 1.15)
             # Speed is reduced by congestion (max 80% reduction)
             congestion_factor = max(0.2, 1.0 - (congestion * 0.8))
-            self.speed = self.base_speed * speed_variance * congestion_factor
+            
+            # Retrieve speed limit multiplier for the current zone from the engine
+            speed_multiplier = 1.0
+            if hasattr(engine, "_zone_key"):
+                zone_key = engine._zone_key(self.x, self.y)
+                manual_mult = getattr(engine, "zone_speed_limits", {}).get(zone_key, 1.0)
+                incident_mult = getattr(engine, "traffic_incident_speed_limits", {}).get(zone_key, 1.0)
+                speed_multiplier = min(manual_mult, incident_mult)
+                
+            self.speed = self.base_speed * speed_variance * congestion_factor * speed_multiplier
 
         distance_moved = 0.0
         if self.path:

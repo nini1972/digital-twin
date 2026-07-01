@@ -187,6 +187,7 @@ class CitySimulationEngine(SimulationEngine):
         ]
         state["zone_congestion"] = self.zone_congestion
         state["zone_speed_limits"] = self.zone_speed_limits
+        state["traffic_incident_speed_limits"] = self.traffic_incident_speed_limits
         
         # --- NIEUW: Voeg marktdata toe aan de hoofdstate ---
         state["market_price_eur_kwh"] = self.current_market_price
@@ -215,7 +216,7 @@ class CitySimulationEngine(SimulationEngine):
             sum(congestion_values) / len(congestion_values) if congestion_values else 0.0
         )
         hotspot = (
-            max(self.zone_congestion, key=self.zone_congestion.get)
+            max(self.zone_congestion, key=lambda k: self.zone_congestion[k])
             if self.zone_congestion else "none"
         )
         
@@ -303,7 +304,7 @@ class CitySimulationEngine(SimulationEngine):
             self.last_traffic_update_tick = current_tick
             
             # Rebuild incident-based speed limits
-            new_limits = {}
+            new_limits: dict[str, float] = {}
             for ev in events:
                 zk = ev["zone_key"]
                 severity = 0.3 if ev["event_type"] == "accident" else 0.5

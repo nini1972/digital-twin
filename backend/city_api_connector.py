@@ -80,8 +80,10 @@ def get_real_production_weather():
 
 def calculate_baseline_demand():
     current_hour = datetime.now().hour
-    if 7 <= current_hour <= 9: return 150.0
-    elif 17 <= current_hour <= 20: return 250.0
+    if 7 <= current_hour <= 9 or 17 <= current_hour <= 20:
+        return 250.0
+    if 10 <= current_hour <= 16:
+        return 150.0
     return 90.0
 
 def send_production_data():

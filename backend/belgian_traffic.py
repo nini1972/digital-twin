@@ -105,9 +105,11 @@ def parse_datex_feed(xml_content: bytes) -> List[Dict[str, Any]]:
             if coord_node.tag.endswith('}pointCoordinates'):
                 for child in coord_node:
                     if child.tag.endswith('}latitude'):
-                        y_val = float(child.text)  # Northing (Y)
+                        if child.text:
+                            y_val = float(child.text)  # Northing (Y)
                     elif child.tag.endswith('}longitude'):
-                        x_val = float(child.text)  # Easting (X)
+                        if child.text:
+                            x_val = float(child.text)  # Easting (X)
                 break
                 
         if x_val is None or y_val is None:

@@ -186,6 +186,29 @@ def _format_sim_state(state: dict) -> str:
     if zone_congestion:
         lines.append(f"- City-wide average congestion: **{avg_cong:.0%}**")
 
+    # --- Speed Limits & Incidents ---
+    active_manual_limits = [f"zone {k} ({mult:.0%})" for k, mult in state.get("zone_speed_limits", {}).items() if mult < 1.0]
+    active_incident_limits = [f"zone {k} ({mult:.0%})" for k, mult in state.get("traffic_incident_speed_limits", {}).items() if mult < 1.0]
+    
+    lines.append("")
+    lines.append("### Traffic Restrictions & Incidents")
+    if active_manual_limits:
+        lines.append(f"- Manual/Oracle throttles: {', '.join(active_manual_limits)}")
+    else:
+        lines.append("- No manual speed restrictions.")
+        
+    if active_incident_limits:
+        lines.append(f"- Accident/Incident speed drops: {', '.join(active_incident_limits)}")
+    else:
+        lines.append("- No incident-based speed restrictions.")
+
+    live_events = state.get("live_traffic_events", [])
+    if live_events:
+        lines.append("")
+        lines.append("#### Active Traffic Incidents Feed:")
+        for ev in live_events:
+            lines.append(f"  • **[{ev['event_type'].upper()}]** in zone **{ev['zone_key']}**: {ev['description']}")
+
     return "\n".join(lines)
 
 def _build_memory_query(state: dict) -> str:

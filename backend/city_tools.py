@@ -380,7 +380,7 @@ def _normalize_scenario_action(city_engine, raw: dict, index: int) -> tuple[Opti
             return None, f"scenario_actions[{index}].weather must be one of: {allowed}"
         normalized["weather"] = weather
     elif action_type in {"add_city_hub", "add_city_resident", "add_city_traffic"}:
-        normalized["count"] = int(_clamp(float(raw.get("count", 1)), 1, 20))
+        normalized["count"] = str(int(_clamp(float(raw.get("count", 1)), 1, 20)))
     elif action_type == "set_hub_price":
         hub_id = str(raw.get("hub_id", "")).strip()
         if not hub_id:
@@ -388,19 +388,19 @@ def _normalize_scenario_action(city_engine, raw: dict, index: int) -> tuple[Opti
         min_price = getattr(city_engine, "MIN_PRICE", 0.10)
         max_price = getattr(city_engine, "MAX_PRICE", 0.80)
         normalized["hub_id"] = hub_id
-        normalized["price"] = _clamp(float(raw.get("price", 0.2)), min_price, max_price)
+        normalized["price"] = str(_clamp(float(raw.get("price", 0.2)), min_price, max_price))
     elif action_type == "set_hub_active_state":
         hub_id = str(raw.get("hub_id", "")).strip()
         if not hub_id:
             return None, f"scenario_actions[{index}].hub_id is required"
         normalized["hub_id"] = hub_id
-        normalized["active"] = _parse_bool(raw.get("active", True), default=True)
+        normalized["active"] = str(_parse_bool(raw.get("active", True), default=True))
     elif action_type == "set_signal_timing":
         zone = str(raw.get("zone", "")).strip()
         if not zone:
             return None, f"scenario_actions[{index}].zone is required"
         normalized["zone"] = zone
-        normalized["multiplier"] = _clamp(float(raw.get("multiplier", 1.0)), MIN_SIGNAL_MULTIPLIER, 1.0)
+        normalized["multiplier"] = str(_clamp(float(raw.get("multiplier", 1.0)), MIN_SIGNAL_MULTIPLIER, 1.0))
     elif action_type == "reroute_traffic":
         zone = str(raw.get("zone", "")).strip()
         if not zone:
@@ -409,18 +409,18 @@ def _normalize_scenario_action(city_engine, raw: dict, index: int) -> tuple[Opti
     elif action_type == "optimize_hub_pricing":
         normalized["objective"] = str(raw.get("objective", "balanced"))
         if "floor" in raw:
-            normalized["floor"] = float(raw.get("floor"))
+            normalized["floor"] = str(float(raw.get("floor", 0.0)))
         if "ceiling" in raw:
-            normalized["ceiling"] = float(raw.get("ceiling"))
-        normalized["max_delta"] = float(raw.get("max_delta", 0.02))
-        normalized["fairness_weight"] = float(raw.get("fairness_weight", 0.5))
+            normalized["ceiling"] = str(float(raw.get("ceiling", 1.0)))
+        normalized["max_delta"] = str(float(raw.get("max_delta", 0.02)))
+        normalized["fairness_weight"] = str(float(raw.get("fairness_weight", 0.5)))
     elif action_type == "rebalance_hub_load":
         normalized["strategy"] = str(raw.get("strategy", "hybrid"))
-        normalized["max_actions"] = int(_clamp(float(raw.get("max_actions", 3)), 1, MAX_TOOL_ACTIONS))
+        normalized["max_actions"] = str(int(_clamp(float(raw.get("max_actions", 3)), 1, MAX_TOOL_ACTIONS)))
         zone = str(raw.get("zone", "")).strip()
         if zone:
             normalized["zone"] = zone
-        normalized["aggressiveness"] = _clamp(float(raw.get("aggressiveness", 0.5)), 0.1, 1.0)
+        normalized["aggressiveness"] = str(_clamp(float(raw.get("aggressiveness", 0.5)), 0.1, 1.0))
 
     return normalized, None
 
@@ -515,7 +515,7 @@ def _scenario_rebalance_hub_load(city_engine, state: dict, strategy: str = "hybr
     max_price = getattr(city_engine, "MAX_PRICE", 0.80)
     zone_congestion = state.setdefault("zone_congestion", {})
     zone_speed_limits = state.setdefault("zone_speed_limits", {})
-    actions = []
+    actions: list[dict] = []
     avg_queue = sum(float(hub.get("queue", 0.0)) for hub in hubs) / len(hubs)
     overloaded = [hub for hub in hubs if float(hub.get("queue", 0.0)) >= max(float(hub.get("capacity", 4)), avg_queue + 1)]
     underused = [hub for hub in hubs if float(hub.get("queue", 0.0)) <= max(0.0, avg_queue - 1)]
@@ -585,33 +585,33 @@ def _apply_scenario_actions(city_engine, state: dict, actions: list[dict]) -> li
             base_idx = len(hubs)
             for index in range(count):
                 hubs.append({"id": f"sim_hub_{base_idx + index}", "x": 50.0, "y": 50.0, "price": 0.20, "queue": 0, "queue_total": 0, "waiting": 0, "charging": 0, "slots_used": 0, "capacity": 4, "active": True})
-            applied.append({"type": "add_city_hub", "count": count})
+            applied.append({"type": "add_city_hub", "count": str(count)})
         elif action_type == "add_city_resident":
             count = int(_clamp(float(raw.get("count", 1)), 1, 20))
             base_idx = len(residents)
             for index in range(count):
                 residents.append({"id": f"sim_res_{base_idx + index}", "x": 50.0, "y": 50.0, "battery": 55.0, "charging": False, "state": "driving"})
-            applied.append({"type": "add_city_resident", "count": count})
+            applied.append({"type": "add_city_resident", "count": str(count)})
         elif action_type == "add_city_traffic":
             count = int(_clamp(float(raw.get("count", 1)), 1, 20))
             base_idx = len(traffic)
             for index in range(count):
                 traffic.append({"id": f"sim_traffic_{base_idx + index}", "x": 50.0, "y": 50.0})
-            applied.append({"type": "add_city_traffic", "count": count})
+            applied.append({"type": "add_city_traffic", "count": str(count)})
         elif action_type == "set_hub_price":
             hub_id = str(raw.get("hub_id", ""))
             price = _clamp(float(raw.get("price", 0.2)), min_price, max_price)
             hub = next((candidate for candidate in hubs if str(candidate.get("id")) == hub_id), None)
             if hub:
                 hub["price"] = price
-                applied.append({"type": "set_hub_price", "hub_id": hub_id, "price": round(price, 3)})
+                applied.append({"type": "set_hub_price", "hub_id": hub_id, "price": str(round(price, 3))})
         elif action_type == "set_hub_active_state":
             hub_id = str(raw.get("hub_id", ""))
             active = bool(raw.get("active", True))
             hub = next((candidate for candidate in hubs if str(candidate.get("id")) == hub_id), None)
             if hub:
                 hub["active"] = active
-                applied.append({"type": "set_hub_active_state", "hub_id": hub_id, "active": active})
+                applied.append({"type": "set_hub_active_state", "hub_id": hub_id, "active": str(active)})
         elif action_type == "set_signal_timing":
             zone = str(raw.get("zone", ""))
             if zone:
@@ -619,16 +619,16 @@ def _apply_scenario_actions(city_engine, state: dict, actions: list[dict]) -> li
                 zone_speed_limits[zone] = multiplier
                 if zone in zone_congestion:
                     zone_congestion[zone] = _clamp(float(zone_congestion[zone]) * multiplier, 0.0, 1.0)
-                applied.append({"type": "set_signal_timing", "zone": zone, "multiplier": round(multiplier, 2)})
+                applied.append({"type": "set_signal_timing", "zone": zone, "multiplier": str(round(multiplier, 2))})
         elif action_type == "reroute_traffic":
             zone = str(raw.get("zone", ""))
             if zone and zone in zone_congestion:
                 zone_congestion[zone] = _clamp(float(zone_congestion[zone]) * 0.75, 0.0, 1.0)
                 applied.append({"type": "reroute_traffic", "zone": zone})
         elif action_type == "optimize_hub_pricing":
-            applied.append({"type": "optimize_hub_pricing", "outcome": _scenario_optimize_hub_pricing(city_engine, state, objective=str(raw.get("objective", "balanced")), floor=raw.get("floor"), ceiling=raw.get("ceiling"), max_delta=float(raw.get("max_delta", 0.02)), fairness_weight=float(raw.get("fairness_weight", 0.5)))})
+            applied.append({"type": "optimize_hub_pricing", "outcome": str(_scenario_optimize_hub_pricing(city_engine, state, objective=str(raw.get("objective", "balanced")), floor=raw.get("floor"), ceiling=raw.get("ceiling"), max_delta=float(raw.get("max_delta", 0.02)), fairness_weight=float(raw.get("fairness_weight", 0.5))))})
         elif action_type == "rebalance_hub_load":
-            applied.append({"type": "rebalance_hub_load", "outcome": _scenario_rebalance_hub_load(city_engine, state, strategy=str(raw.get("strategy", "hybrid")), max_actions=int(raw.get("max_actions", 3)), zone=raw.get("zone"), aggressiveness=float(raw.get("aggressiveness", 0.5)))})
+            applied.append({"type": "rebalance_hub_load", "outcome": str(_scenario_rebalance_hub_load(city_engine, state, strategy=str(raw.get("strategy", "hybrid")), max_actions=int(raw.get("max_actions", 3)), zone=raw.get("zone"), aggressiveness=float(raw.get("aggressiveness", 0.5))))})
 
     return applied
 
@@ -661,7 +661,6 @@ def _run_projection(city_engine, state: dict, horizon_ticks: int, runs: int) -> 
             # Simple state transition modeling for credibility
             driving = [r for r in residents if r.get("state") == "driving"]
             seeking = [r for r in residents if r.get("state") == "seeking"]
-            waiting = [r for r in residents if r.get("state") == "waiting"]
             charging = [r for r in residents if r.get("state") == "charging"]
             
             # 1. Driving -> Seeking (battery drain)

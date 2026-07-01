@@ -16,6 +16,7 @@ type CityState = {
   weather?: string;
   zone_congestion: Record<string, number>;
   zone_speed_limits: Record<string, number>;
+  traffic_incident_speed_limits?: Record<string, number>;
 };
 
 type TelemetryRow = {
@@ -79,7 +80,12 @@ export default function PolicyDashboard({
   onToggleMode?: () => void,
   telemetryHistory?: TelemetryRow[]
 }) {
-  const activeSpeedLimits = Object.entries(cityState.zone_speed_limits).filter(([, mult]) => mult < 1.0);
+  const manualThrottled = Object.entries(cityState.zone_speed_limits).filter(([, mult]) => mult < 1.0);
+  const incidentThrottled = Object.entries(cityState.traffic_incident_speed_limits ?? {}).filter(([, mult]) => mult < 1.0);
+  const activeSpeedLimits = Array.from(new Set([
+    ...manualThrottled.map(([zone]) => zone),
+    ...incidentThrottled.map(([zone]) => zone),
+  ]));
   const avgCongestion = Object.values(cityState.zone_congestion).reduce((a, b) => a + b, 0) / (Object.values(cityState.zone_congestion).length || 1);
   const criticalRatio = segments?.battery_segments?.battery_critical?.ratio || 0;
   const lowRatio = segments?.battery_segments?.battery_low?.ratio || 0;

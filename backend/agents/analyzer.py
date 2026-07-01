@@ -11,7 +11,7 @@ CongestionAnalyzerAgent — detects persistent congestion hotspots.
 import asyncio
 from collections import deque
 from datetime import datetime
-from typing import Deque
+from typing import Deque, Optional
 
 from redis_bus import (
     bus,
@@ -55,11 +55,12 @@ class DemandAnalyzerAgent:
                 print(f"[DemandAnalyzerAgent] error: {exc}")
                 await asyncio.sleep(1)
 
-    def _store_vector_with_cooldown(self, pattern_type: str, text: str, metadata: dict = None):
+    def _store_vector_with_cooldown(self, pattern_type: str, text: str, metadata: Optional[dict] = None) -> None:
+        meta = metadata if metadata is not None else {}
         current_tick = self._window[-1].get("tick", 0) if self._window else 0
         last_stored = self._last_stored_ticks.get(pattern_type, -self.VECTOR_STORE_COOLDOWN_TICKS)
         if current_tick - last_stored >= self.VECTOR_STORE_COOLDOWN_TICKS:
-            vector_memory.store(pattern_type, text, metadata)
+            vector_memory.store(pattern_type, text, meta)
             self._last_stored_ticks[pattern_type] = current_tick
 
     async def _analyze(self):
@@ -193,7 +194,7 @@ class CongestionAnalyzerAgent:
             self._last_stored_ticks[key] = current_tick
 
     async def _analyze(self):
-        zone_counts: dict[str, list] = {}
+        zone_counts: dict[str, list[dict]] = {}
         for e in self._window:
             if e.get("event") == "congestion_hotspot":
                 zone = e["zone"]
