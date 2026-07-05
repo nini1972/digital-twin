@@ -13,6 +13,25 @@ type Resident = {
   battery: number; battery_raw: number; battery_capacity: number; vehicle_type: string; charging: boolean; state: string;
   soh: number; aero_drag: number; regen_efficiency: number;
   battery_temperature: number; payload_weight: number;
+  persona?: {
+    name: string;
+    age: number;
+    occupation: string;
+    income_tier: string;
+    bio: string;
+    traits: {
+      price_sensitivity: number;
+      time_sensitivity: number;
+      eco_sensitivity: number;
+      patience: number;
+    };
+  };
+  latest_thought?: {
+    thought: string;
+    emoji: string;
+    sentiment: string;
+    tick: number;
+  };
 };
 
 type Hub = {
@@ -124,6 +143,11 @@ const ProfitMarginWidget = dynamic(() => import('@/components/ProfitMarginWidget
   loading: () => <SidebarPanelSkeleton title="Financial Margins" className="min-h-[290px]" />,
 });
 
+const SemanticMemory = dynamic(() => import('@/components/semantic-memory'), {
+  ssr: false,
+  loading: () => <SidebarPanelSkeleton title="Semantic Memory" className="min-h-[380px]" />,
+});
+
 // ---------------------------------------------------------------------------
 // Sparkline
 // ---------------------------------------------------------------------------
@@ -179,10 +203,26 @@ export default function CityTwinPage() {
   const [oracleMode, setOracleMode] = useState<'advisor' | 'autopilot'>('advisor');
   const isTogglingRef = useRef(false);
   const [hoveredResidentId, setHoveredResidentId] = useState<string | null>(null);
+  const [selectedResidentThoughts, setSelectedResidentThoughts] = useState<{ tick: number; type: string; thought: string }[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevHubPricesRef = useRef<Record<string, number>>({});
+
+  const normalizedResidentFilter = residentFilter.trim().toLowerCase();
+  const matchingResidents = cityState.residents.filter((r) => {
+    const shortId = r.id.replace('res_', '').toLowerCase();
+    return (
+      shortId.includes(normalizedResidentFilter) ||
+      r.id.toLowerCase().includes(normalizedResidentFilter)
+    );
+  });
+  const selectedResidentId = normalizedResidentFilter
+    ? (matchingResidents[0]?.id ?? null)
+    : null;
+  const selectedResident = selectedResidentId
+    ? cityState.residents.find((r) => r.id === selectedResidentId) ?? null
+    : null;
 
   // Load persisted start mode preference once on mount.
   useEffect(() => {
@@ -204,6 +244,35 @@ export default function CityTwinPage() {
       // Ignore localStorage failures.
     }
   }, [startMode]);
+
+  // Fetch thoughts for selected resident
+  useEffect(() => {
+    if (!selectedResidentId) {
+      setSelectedResidentThoughts([]);
+      return;
+    }
+    
+    let cancelled = false;
+    const fetchThoughts = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/city/residents/${selectedResidentId}/thoughts`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (cancelled) return;
+        setSelectedResidentThoughts(data.thoughts || []);
+      } catch (err) {
+        console.error("Error fetching thoughts:", err);
+      }
+    };
+    
+    fetchThoughts();
+    const interval = setInterval(fetchThoughts, 3000);
+    
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [selectedResidentId]);
 
   // Configure live feed start behavior based on selected mode.
   useEffect(() => {
@@ -453,20 +522,7 @@ export default function CityTwinPage() {
     ? congestionValues.reduce((a, b) => a + b, 0) / congestionValues.length
     : 0;
   const maxCongestion = congestionValues.length ? Math.max(...congestionValues) : 0;
-  const normalizedResidentFilter = residentFilter.trim().toLowerCase();
-  const matchingResidents = cityState.residents.filter((r) => {
-    const shortId = r.id.replace('res_', '').toLowerCase();
-    return (
-      shortId.includes(normalizedResidentFilter) ||
-      r.id.toLowerCase().includes(normalizedResidentFilter)
-    );
-  });
-  const selectedResidentId = normalizedResidentFilter
-    ? (matchingResidents[0]?.id ?? null)
-    : null;
-  const selectedResident = selectedResidentId
-    ? cityState.residents.find((r) => r.id === selectedResidentId) ?? null
-    : null;
+
 
   // ---------------------------------------------------------------------------
   // Render
@@ -715,7 +771,15 @@ export default function CityTwinPage() {
                   opacity={isSelected ? 1 : 0.22}
                   onMouseEnter={() => setHoveredResidentId(res.id)}
                   onMouseLeave={() => setHoveredResidentId(null)}
+                  onClick={() => setResidentFilter(residentLabel)}
                 >
+                  {res.latest_thought && (
+                    <g transform="translate(0, -7.5)" className="pointer-events-none">
+                      <rect x="-2.5" y="-3" width="5" height="3.8" rx="0.8" fill="#12121a" stroke="rgba(255,255,255,0.15)" strokeWidth="0.2" />
+                      <text y="-0.3" textAnchor="middle" fontSize="2.5">{res.latest_thought.emoji}</text>
+                      <polygon points="0,1.2 -0.6,0.7 0.6,0.7" fill="#12121a" stroke="rgba(255,255,255,0.15)" strokeWidth="0.15" />
+                    </g>
+                  )}
                   {isSelected && selectedResidentId && <circle r="3.4" fill="none" className="stroke-cyan-300/70 stroke-[0.45] animate-pulse pointer-events-none" />}
                   {/* Invisible hit area for easier hovering */}
                   <circle r="6" fill="transparent" />
@@ -939,15 +1003,104 @@ export default function CityTwinPage() {
               })}
             </div>
             {selectedResident ? (
-              <div className="mt-1 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs">
-                <p className="font-mono text-cyan-200 mb-1">EV {selectedResident.id.replace('res_', '')} ({selectedResident.vehicle_type})</p>
-                <p className="text-slate-300">State: <span className="text-slate-100 font-medium uppercase">{selectedResident.state}</span></p>
-                <p className="text-slate-300">Battery: <span className="text-slate-100 font-medium">{selectedResident.battery.toFixed(1)}%</span> <span className="text-slate-500 font-mono">({selectedResident.battery_raw?.toFixed(1)}/{selectedResident.battery_capacity?.toFixed(1)}kWh)</span></p>
-                <p className="text-slate-300">Health (SOH): <span className={`font-medium ${selectedResident.soh > 0.9 ? 'text-green-400' : selectedResident.soh > 0.8 ? 'text-yellow-400' : 'text-red-400'}`}>{(selectedResident.soh * 100).toFixed(1)}%</span></p>
-                <p className="text-slate-300">Physics: <span className="text-slate-100 font-medium">{cityState.weather === 'extreme_cold' ? '❄️ Coldgate Active' : cityState.weather === 'extreme_heat' ? '🔥 Thermal Throttled' : '✅ Nominal'}</span></p>
-                <p className="text-slate-300">Drag/Regen: <span className="text-slate-100 font-medium">{selectedResident.aero_drag?.toFixed(3)} kW / {(selectedResident.regen_efficiency * 100).toFixed(0)}%</span></p>
-                <p className="text-slate-300">Temp/Payload: <span className="text-slate-100 font-medium">{selectedResident.battery_temperature?.toFixed(1)}°C / {selectedResident.payload_weight?.toFixed(0)} kg</span></p>
-                <p className="text-slate-300">Position: <span className="text-slate-100 font-mono">({selectedResident.x.toFixed(1)}, {selectedResident.y.toFixed(1)})</span></p>
+              <div className="mt-1 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-xs space-y-3">
+                {/* Persona Header */}
+                {selectedResident.persona ? (
+                  <div className="border-b border-white/5 pb-2 mb-2">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-semibold text-white text-sm">{selectedResident.persona.name}</h4>
+                        <p className="text-[10px] text-cyan-300 font-mono">{selectedResident.persona.occupation}, {selectedResident.persona.age}</p>
+                      </div>
+                      <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-white/5 text-slate-400 font-mono shrink-0">
+                        {selectedResident.persona.income_tier} Income
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 italic mt-1.5">"{selectedResident.persona.bio}"</p>
+                  </div>
+                ) : (
+                  <p className="font-mono text-cyan-200 mb-1">EV {selectedResident.id.replace('res_', '')} ({selectedResident.vehicle_type})</p>
+                )}
+
+                {/* Behavioral Traits */}
+                {selectedResident.persona?.traits && (
+                  <div className="space-y-1.5 py-1">
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Behavioral Traits</p>
+                    
+                    {/* Price Sensitivity */}
+                    <div>
+                      <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                        <span>Price Sensitivity</span>
+                        <span className="font-mono">{Math.round(selectedResident.persona.traits.price_sensitivity * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-red-400 transition-all duration-500" style={{ width: `${selectedResident.persona.traits.price_sensitivity * 100}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Time Sensitivity */}
+                    <div>
+                      <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                        <span>Time Sensitivity</span>
+                        <span className="font-mono">{Math.round(selectedResident.persona.traits.time_sensitivity * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-green-400 transition-all duration-500" style={{ width: `${selectedResident.persona.traits.time_sensitivity * 100}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Eco Sensitivity */}
+                    <div>
+                      <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                        <span>Eco Sensitivity</span>
+                        <span className="font-mono">{Math.round(selectedResident.persona.traits.eco_sensitivity * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-blue-400 transition-all duration-500" style={{ width: `${selectedResident.persona.traits.eco_sensitivity * 100}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Patience */}
+                    <div>
+                      <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                        <span>Patience</span>
+                        <span className="font-mono">{Math.round(selectedResident.persona.traits.patience * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-yellow-400 transition-all duration-500" style={{ width: `${selectedResident.persona.traits.patience * 100}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* State & Telemetry */}
+                <div className="grid grid-cols-2 gap-2 border-t border-b border-white/5 py-2 my-2 text-[10px] text-slate-300">
+                  <p>State: <span className="text-white font-medium uppercase">{selectedResident.state}</span></p>
+                  <p>Battery: <span className="text-white font-medium">{selectedResident.battery.toFixed(1)}%</span></p>
+                  <p>SOH: <span className="text-white font-medium">{(selectedResident.soh * 100).toFixed(0)}%</span></p>
+                  <p>Drag: <span className="text-white font-medium">{selectedResident.aero_drag?.toFixed(2)} kW</span></p>
+                  <p>Temp: <span className="text-white font-medium">{selectedResident.battery_temperature?.toFixed(0)}°C</span></p>
+                  <p>Payload: <span className="text-white font-medium">{selectedResident.payload_weight?.toFixed(0)} kg</span></p>
+                </div>
+
+                {/* Thought Logs terminal */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex justify-between items-center">
+                    <span>Inner Mind Logs</span>
+                    {selectedResidentThoughts.length > 0 && <span className="animate-pulse text-[8px] bg-cyan-400/20 text-cyan-300 px-1 py-0.5 rounded font-mono">LIVE</span>}
+                  </p>
+                  <div className="h-28 overflow-y-auto bg-black/40 rounded-lg p-2 font-mono text-[9px] text-slate-300 space-y-1.5 border border-white/5">
+                    {selectedResidentThoughts.length > 0 ? (
+                      selectedResidentThoughts.map((t, idx) => (
+                        <div key={idx} className="border-b border-white/5 pb-1 last:border-0 last:pb-0">
+                          <span className="text-cyan-400 font-bold">Tick {t.tick}:</span> <span className="text-slate-200">{t.thought}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-slate-500 italic text-center pt-8">No thoughts recorded yet.</p>
+                    )}
+                  </div>
+                </div>
               </div>
             ) : normalizedResidentFilter ? (
               <p className="text-xs text-amber-300/80">No EV match for this filter.</p>
@@ -974,6 +1127,9 @@ export default function CityTwinPage() {
               </div>
             ))}
           </div>
+
+          {/* Semantic Memory Search */}
+          <SemanticMemory />
 
           {/* Policy Dashboard */}
           <div className="min-h-[760px]">

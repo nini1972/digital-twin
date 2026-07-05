@@ -332,10 +332,272 @@ async def run_midnight_audit_scheduler():
     except Exception as e:
         print(f"Error in midnight audit scheduler background loop: {e}")
 
+
+async def seed_resident_personas():
+    """Seed the database with 25 diverse resident personas."""
+    from database import load_resident_personas, save_resident_persona
+    existing = load_resident_personas()
+    if existing:
+        return
+        
+    seeded = False
+    if openai_client:
+        try:
+            print("[Census] Generating 25 unique resident personas via LLM...")
+            prompt_str = """
+            Generate exactly 25 unique, diverse resident personas for a smart city simulation.
+            Ensure a good demographic mix:
+            - 30% low-income freelancers, students, gig workers (high price sensitivity, low time sensitivity)
+            - 40% mid-income families, teachers, office workers (balanced sensitivity traits)
+            - 20% high-income executives, consultants (low price sensitivity, high time sensitivity)
+            - 10% eco-activists (high eco-sensitivity, values solar-aligned charging)
+            
+            Return strictly a JSON array of objects matching this format:
+            [
+              {
+                "id": "res_0", // res_0 through res_24
+                "name": "Full Name",
+                "age": 30,
+                "occupation": "Job Title",
+                "income_tier": "low" | "medium" | "high",
+                "bio": "Short description of daily commute, budget, and driving habits.",
+                "vehicle_type": "sedan" | "suv" | "truck",
+                "traits": {
+                  "price_sensitivity": 0.85, // 0.0 to 1.0
+                  "time_sensitivity": 0.30,  // 0.0 to 1.0
+                  "eco_sensitivity": 0.90,   // 0.0 to 1.0
+                  "patience": 0.70           // 0.0 to 1.0
+                }
+              }
+            ]
+            Ensure you output exactly 25 items, res_0 to res_24.
+            """
+            
+            response = call_chat_completion(
+                messages=[{"role": "user", "content": prompt_str}],
+                response_format={"type": "json_object"} if "gpt" in LLM_MODEL_ID or "mini" in LLM_MODEL_ID else None,
+                temperature=0.7,
+                max_tokens=4000
+            )
+            
+            content = response.choices[0].message.content
+            if content.startswith("```json"):
+                content = content.replace("```json", "").replace("```", "").strip()
+                
+            data = json.loads(content)
+            residents = data if isinstance(data, list) else data.get("residents", [])
+            
+            if residents and len(residents) >= 20:
+                for res in residents:
+                    save_resident_persona(
+                        persona_id=res["id"],
+                        name=res["name"],
+                        age=res["age"],
+                        occupation=res["occupation"],
+                        income_tier=res["income_tier"],
+                        bio=res["bio"],
+                        vehicle_type=res["vehicle_type"],
+                        traits=res["traits"]
+                    )
+                print(f"[Census] Successfully seeded {len(residents)} resident personas via LLM.")
+                seeded = True
+        except Exception as e:
+            print(f"[Census] Failed to seed via LLM, falling back to static roster: {e}")
+            
+    if not seeded:
+        # Static fallback list of 25 residents
+        print("[Census] Seeding database with 25 static fallback resident personas...")
+        fallback_list = [
+            {"id": f"res_{i}", "name": name, "age": age, "occupation": job, "income_tier": tier, "bio": bio, "vehicle_type": v_type, "traits": traits}
+            for i, (name, age, job, tier, bio, v_type, traits) in enumerate([
+                ("Elena Dubois", 28, "Freelance Graphic Designer", "low", "Works from local cafes. Very budget-conscious and watches every penny.", "sedan", {"price_sensitivity": 0.85, "time_sensitivity": 0.30, "eco_sensitivity": 0.90, "patience": 0.70}),
+                ("Marc Janssen", 42, "Corporate Finance Director", "high", "Busy consultant who travels constantly for client presentations. Values efficiency above all.", "suv", {"price_sensitivity": 0.20, "time_sensitivity": 0.95, "eco_sensitivity": 0.40, "patience": 0.15}),
+                ("Sarah Peeters", 31, "High School Teacher", "medium", "Commutes daily to local high school. Environmentally conscious and drives carefully.", "sedan", {"price_sensitivity": 0.55, "time_sensitivity": 0.60, "eco_sensitivity": 0.85, "patience": 0.60}),
+                ("David Maes", 23, "University Student & Food Courier", "low", "Drives delivery truck part-time. Highly price-sensitive, trying to squeeze profit margins.", "truck", {"price_sensitivity": 0.90, "time_sensitivity": 0.80, "eco_sensitivity": 0.50, "patience": 0.40}),
+                ("Annelies Claes", 54, "Boutique Owner", "medium", "Commutes to her city-centre boutique. Prefers convenient charging near shops.", "sedan", {"price_sensitivity": 0.45, "time_sensitivity": 0.50, "eco_sensitivity": 0.70, "patience": 0.80}),
+                ("Thomas Mertens", 37, "Software Architect", "high", "Early adopter of clean tech. Tech-enthusiast who loves solar-aligned charging.", "suv", {"price_sensitivity": 0.30, "time_sensitivity": 0.70, "eco_sensitivity": 0.95, "patience": 0.50}),
+                ("Charlotte Willems", 29, "Pediatric Nurse", "medium", "Works long hospital shifts. Needs reliable charging during night hours.", "sedan", {"price_sensitivity": 0.50, "time_sensitivity": 0.85, "eco_sensitivity": 0.75, "patience": 0.30}),
+                ("Jan Goossens", 67, "Retired Architect", "medium", "Enjoys quiet trips to parks. High patience and low travel frequency.", "sedan", {"price_sensitivity": 0.40, "time_sensitivity": 0.20, "eco_sensitivity": 0.80, "patience": 0.95}),
+                ("Sofie Wouters", 33, "Environmental Policy Advocate", "medium", "Dedicated green activist. Only charges at solar-aligned or green hubs.", "sedan", {"price_sensitivity": 0.60, "time_sensitivity": 0.40, "eco_sensitivity": 0.99, "patience": 0.70}),
+                ("Luc Hermans", 48, "Plumbing Contractor", "high", "Drives a heavy utility truck. High daily mileage, needs fast capacity.", "truck", {"price_sensitivity": 0.35, "time_sensitivity": 0.90, "eco_sensitivity": 0.30, "patience": 0.20}),
+            ] + [
+                (f"Resident {i}", f"Commuter {i}", random.randint(22, 65), "Office Clerk" if i%2==0 else "Sales Rep", "medium" if i%3!=0 else "low", "Commutes back and forth through the city zones daily.", random.choice(["sedan", "suv", "truck"]), {"price_sensitivity": round(random.uniform(0.3, 0.8), 2), "time_sensitivity": round(random.uniform(0.3, 0.8), 2), "eco_sensitivity": round(random.uniform(0.3, 0.9), 2), "patience": round(random.uniform(0.3, 0.9), 2)})
+                for i in range(10, 25)
+            ])
+        ]
+        for res in fallback_list:
+            save_resident_persona(
+                persona_id=res["id"],
+                name=res["name"],
+                age=res["age"],
+                occupation=res["occupation"],
+                income_tier=res["income_tier"],
+                bio=res["bio"],
+                vehicle_type=res["vehicle_type"],
+                traits=res["traits"]
+            )
+
+
+async def generate_thought_in_background(resident, prev_state, next_state, tick):
+    """Asynchronously generates a citizen inner monologue thought and logs it."""
+    from database import save_resident_thought
+    
+    persona = getattr(resident, "persona", None)
+    if not persona:
+        from database import load_resident_personas
+        personas = load_resident_personas()
+        persona = personas.get(resident.id)
+        resident.persona = persona
+        
+    if not persona:
+        persona = {
+            "name": f"Driver {resident.id.replace('res_', '')}",
+            "age": 30,
+            "occupation": "Commuter",
+            "bio": "A standard city resident.",
+            "traits": {"price_sensitivity": 0.5, "time_sensitivity": 0.5, "eco_sensitivity": 0.5, "patience": 0.5}
+        }
+        
+    battery_pct = (resident.battery / resident.battery_capacity) * 100
+    weather = getattr(city_engine, "weather", "sunny")
+    congestion = city_engine.get_congestion_for(resident.x, resident.y)
+    
+    context_note = ""
+    decision_type = next_state.value
+    
+    if next_state.value == "seeking":
+        context_note = "Your battery is running low. You are currently looking for an active charging hub."
+    elif next_state.value == "waiting":
+        hub_name = getattr(resident.current_hub, "id", "a hub")
+        queue_len = getattr(resident.current_hub, "queue_length", 0)
+        context_note = f"You arrived at {hub_name} but all slots are full, so you are waiting in queue. There are {queue_len} cars ahead of you."
+    elif next_state.value == "charging":
+        hub_name = getattr(resident.current_hub, "id", "a hub")
+        price = getattr(resident.current_hub, "price", 0.15)
+        context_note = f"You successfully got a slot at {hub_name} and are now actively charging. The current price is €{price:.2f}/kWh."
+    elif next_state.value == "driving":
+        if prev_state.value == "charging":
+            context_note = "You finished charging and are now leaving the hub to resume driving to your next destination."
+        else:
+            context_note = "You are cruising around the city zones, following your daily commute path."
+            
+    thought_text = ""
+    emoji = "🚗"
+    sentiment = "neutral"
+    
+    if openai_client:
+        try:
+            prompt = f"""
+            You are {persona['name']}, a {persona['age']}-year-old {persona['occupation']}.
+            Bio: {persona['bio']}
+            Traits (0-1 scale):
+            - Price Sensitivity: {persona['traits']['price_sensitivity']}
+            - Time Sensitivity: {persona['traits']['time_sensitivity']}
+            - Eco Sensitivity: {persona['traits']['eco_sensitivity']}
+            - Patience: {persona['traits']['patience']}
+
+            Current State:
+            - Weather: {weather}
+            - Local Road Congestion: {congestion*100:.0f}%
+            - EV Battery: {battery_pct:.1f}%
+            - Transition: You went from {prev_state.value} to {next_state.value}.
+            - Context: {context_note}
+
+            Write a 1-sentence inner thought monologue expressing your reaction to this event.
+            Must reflect your personality (e.g. if you are price-sensitive, mention cost; if impatient, express rush). Keep it under 15 words.
+            Also, choose a single emoji for your emotion.
+            Return strictly a JSON object:
+            {{"thought": "your thought", "emoji": "emoji", "sentiment": "satisfied" | "frustrated" | "neutral"}}
+            """
+            
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: call_chat_completion(
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"} if "gpt" in LLM_MODEL_ID or "mini" in LLM_MODEL_ID else None,
+                    temperature=0.7,
+                    max_tokens=200
+                )
+            )
+            content = response.choices[0].message.content
+            data = json.loads(content)
+            thought_text = data.get("thought", "")
+            emoji = data.get("emoji", "🚗")
+            sentiment = data.get("sentiment", "neutral")
+        except Exception:
+            pass
+            
+    if not thought_text:
+        traits = persona["traits"]
+        p_sens = traits.get("price_sensitivity", 0.5)
+        t_sens = traits.get("time_sensitivity", 0.5)
+        pat = traits.get("patience", 0.5)
+        
+        if next_state.value == "seeking":
+            if p_sens > 0.7:
+                thought_text = "Battery low. I need to find the cheapest hub around here."
+                emoji = "💵"
+                sentiment = "neutral"
+            elif t_sens > 0.7:
+                thought_text = "I'm in a rush! I need a charger right now!"
+                emoji = "⚡"
+                sentiment = "anxious"
+            else:
+                thought_text = "Time to look for a charging hub before I run empty."
+                emoji = "🔋"
+                sentiment = "neutral"
+        elif next_state.value == "waiting":
+            if pat < 0.4:
+                thought_text = "This queue is taking forever. I hate waiting!"
+                emoji = "😠"
+                sentiment = "frustrated"
+            else:
+                thought_text = "Waiting in queue. I'll listen to a podcast for a bit."
+                emoji = "⏳"
+                sentiment = "neutral"
+        elif next_state.value == "charging":
+            hub_price = getattr(resident.current_hub, "price", 0.15)
+            if hub_price > 0.5 and p_sens > 0.6:
+                thought_text = f"Charging is so expensive today at €{hub_price:.2f}/kWh!"
+                emoji = "💸"
+                sentiment = "frustrated"
+            else:
+                thought_text = "Glad to get a slot. Charging up now."
+                emoji = "🔌"
+                sentiment = "satisfied"
+        else:
+            if congestion > 0.6:
+                thought_text = "Traffic is terrible today. I'm moving so slowly."
+                emoji = "🚗"
+                sentiment = "frustrated"
+            else:
+                thought_text = "Cruising along the city avenues. Nice drive."
+                emoji = "😎"
+                sentiment = "satisfied"
+                
+    save_resident_thought(resident.id, tick, decision_type, thought_text, sentiment)
+    resident.latest_thought = {
+        "thought": thought_text,
+        "emoji": emoji,
+        "sentiment": sentiment,
+        "tick": tick
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize SQLite database (creates tables incl. new city ones)
     init_db()
+    # Seed resident personas if table is empty
+    await seed_resident_personas()
+    # Bind personas to active residents
+    from database import load_resident_personas
+    personas = load_resident_personas()
+    for res in city_engine.residents:
+        res.persona = personas.get(res.id)
+    # Register thought generation callback
+    city_engine.thought_subscribers.append(generate_thought_in_background)
     # Initialize vector memory (ChromaDB)
     vector_memory.init()
     # Connect event bus (Redis or in-process fallback)
@@ -432,16 +694,104 @@ def _resolve_openai_api_key() -> Optional[str]:
     return None
 
 
-# Initialize OpenAI client
-try:
-    openai_client = OpenAI(api_key=_resolve_openai_api_key())
-except Exception as e:
-    print(f"Warning: Failed to initialize OpenAI client: {e}")
-    openai_client = None
-
-
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
 LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "gpt-4o-mini")
+
+# Initialize LLM Clients
+openai_client = None
+ollama_client = None
+openrouter_client = None
+
+if LLM_PROVIDER == "openai":
+    try:
+        openai_client = OpenAI(api_key=_resolve_openai_api_key())
+    except Exception as e:
+        print(f"Warning: Failed to initialize OpenAI client: {e}")
+        openai_client = None
+elif LLM_PROVIDER == "ollama":
+    try:
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        ollama_client = OpenAI(base_url=base_url, api_key="ollama")
+        print(f"[LLM] Initialized Ollama client on {base_url} with model {LLM_MODEL_ID}")
+    except Exception as e:
+        print(f"Warning: Failed to initialize Ollama client: {e}")
+        ollama_client = None
+elif LLM_PROVIDER == "openrouter":
+    try:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            api_key = os.getenv("OPENAI_API_KEY")
+        openrouter_client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            default_headers={
+                "HTTP-Referer": "https://dominique-reyntjens.com",
+                "X-Title": "Dominique Digital Twin"
+            }
+        )
+        print(f"[LLM] Initialized OpenRouter client with model {LLM_MODEL_ID}")
+    except Exception as e:
+        print(f"Warning: Failed to initialize OpenRouter client: {e}")
+        openrouter_client = None
+
+
 ALLOW_CODE_EXECUTION = os.getenv("ALLOW_CODE_EXECUTION", "false").lower() == "true"
+
+
+def call_chat_completion(messages, tools=None, response_format=None, max_tokens=1000, temperature=0.7):
+    """Unified completion interface supporting OpenAI, Ollama, and OpenRouter."""
+    if LLM_PROVIDER == "openai":
+        if not openai_client:
+            raise HTTPException(status_code=500, detail="OpenAI client is not initialized")
+        kwargs = {
+            "model": LLM_MODEL_ID,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        if tools:
+            kwargs["tools"] = tools
+        if response_format:
+            kwargs["response_format"] = response_format
+        return openai_client.chat.completions.create(**kwargs)
+        
+    elif LLM_PROVIDER == "ollama":
+        if not ollama_client:
+            raise HTTPException(status_code=500, detail="Ollama client is not initialized")
+        kwargs = {
+            "model": LLM_MODEL_ID,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "extra_body": {
+                "options": {
+                    "num_ctx": 8192
+                }
+            }
+        }
+        if tools:
+            kwargs["tools"] = tools
+        if response_format:
+            kwargs["response_format"] = response_format
+        return ollama_client.chat.completions.create(**kwargs)
+        
+    elif LLM_PROVIDER == "openrouter":
+        if not openrouter_client:
+            raise HTTPException(status_code=500, detail="OpenRouter client is not initialized")
+        kwargs = {
+            "model": LLM_MODEL_ID,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        if tools:
+            kwargs["tools"] = tools
+        if response_format:
+            kwargs["response_format"] = response_format
+        return openrouter_client.chat.completions.create(**kwargs)
+        
+    else:
+        raise HTTPException(status_code=500, detail=f"Unsupported LLM provider: {LLM_PROVIDER}")
 
 # Safety constraints for optimization tools (hard limits)
 MIN_ACTIVE_HUBS_FOR_OPTIMIZATION = city_tools.MIN_ACTIVE_HUBS_FOR_OPTIMIZATION
@@ -1156,8 +1506,7 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
     tools = build_finance_tools()
 
     try:
-        response = openai_client.chat.completions.create(
-            model=LLM_MODEL_ID,
+        response = call_chat_completion(
             messages=messages,
             tools=tools,
             temperature=0.7,
@@ -1193,8 +1542,7 @@ def call_llm(conversation: List[Dict], user_message: str) -> str:
                     "content": json.dumps(result_body),
                 })
 
-            second_response = openai_client.chat.completions.create(
-                model=LLM_MODEL_ID,
+            second_response = call_chat_completion(
                 messages=messages,
                 temperature=0.7,
                 max_tokens=2000,
@@ -1468,8 +1816,6 @@ async def city_chat(request: ChatRequest):
     try:
         session_id = request.session_id or str(uuid.uuid4())
         conversation = load_conversation(f"city_{session_id}")
-        if not openai_client:
-            raise HTTPException(status_code=500, detail="OpenAI client is not initialized")
         # Build city-aware messages
         sim_state = city_engine.get_state()
         chief_mode = getattr(city_engine, "chief_mode", "advisor")
@@ -1480,11 +1826,10 @@ async def city_chat(request: ChatRequest):
         messages.append({"role": "user", "content": request.message})
         city_tools = city_chat_tools.build_city_chat_tools()
 
-        response = openai_client.chat.completions.create(
-            model=LLM_MODEL_ID,
+        response = call_chat_completion(
             messages=messages,
             tools=city_tools,
-            max_tokens=1024,
+            max_tokens=4096,
         )
 
         response_message = response.choices[0].message
@@ -1529,10 +1874,9 @@ async def city_chat(request: ChatRequest):
                     "content": json.dumps(result_body),
                 })
 
-            follow_up = openai_client.chat.completions.create(
-                model=LLM_MODEL_ID,
+            follow_up = call_chat_completion(
                 messages=messages,
-                max_tokens=1024,
+                max_tokens=4096,
             )
             assistant_message = follow_up.choices[0].message.content
         else:
@@ -1836,9 +2180,7 @@ async def city_websocket(websocket: WebSocket):
                 new_hub = ChargingHubAgent(f"hub_{len(city_engine.hubs)}")
                 city_engine.hubs.append(new_hub)
             elif data == "add_resident":
-                from simulation import ResidentAgent
-                new_res = ResidentAgent(f"res_{len(city_engine.residents)}")
-                city_engine.residents.append(new_res)
+                asyncio.create_task(add_resident_dynamically())
             elif data == "add_traffic":
                 from city_simulation import TrafficFlowAgent
                 new_t = TrafficFlowAgent(f"traffic_{len(city_engine.traffic_agents)}")
@@ -1846,6 +2188,163 @@ async def city_websocket(websocket: WebSocket):
     except WebSocketDisconnect:
         if send_city_state in city_engine.subscribers:
             city_engine.subscribers.remove(send_city_state)
+
+
+# Helper to add resident dynamically (shared between API and WebSocket)
+async def add_resident_dynamically() -> dict:
+    from database import save_resident_persona
+    from simulation import ResidentAgent
+    import random
+    
+    new_id = f"res_{len(city_engine.residents)}"
+    weather = getattr(city_engine, "weather", "sunny")
+    avg_price = city_engine.get_city_metrics().get("avg_price", 0.15)
+    
+    hotspots = [k for k, v in city_engine.zone_congestion.items() if v > 0.5]
+    hotspot_str = f"heavy congestion in zones {', '.join(hotspots)}" if hotspots else "stable traffic"
+    
+    name = f"Driver {new_id.replace('res_', '')}"
+    age = random.randint(22, 60)
+    occupation = "Commuter"
+    bio = "Spawned dynamically into the city twin."
+    v_type = random.choice(["sedan", "suv", "truck"])
+    traits = {"price_sensitivity": 0.5, "time_sensitivity": 0.5, "eco_sensitivity": 0.5, "patience": 0.5}
+    
+    if openai_client:
+        try:
+            prompt_str = f"""
+            Generate a unique resident persona to be spawned in a smart city simulation under the following conditions:
+            - Weather: {weather}
+            - Traffic Conditions: {hotspot_str}
+            - Grid Price Level: €{avg_price:.2f}/kWh
+            
+            Make the narrative bio and occupations logically align with these active conditions.
+            Return strictly a JSON object:
+            {{
+              "name": "Full Name",
+              "age": 35,
+              "occupation": "Job Title",
+              "income_tier": "low" | "medium" | "high",
+              "bio": "Description of why they are driving right now under these conditions.",
+              "vehicle_type": "sedan" | "suv" | "truck",
+              "traits": {{
+                "price_sensitivity": 0.5, // 0.0 to 1.0
+                "time_sensitivity": 0.5,  // 0.0 to 1.0
+                "eco_sensitivity": 0.5,   // 0.0 to 1.0
+                "patience": 0.5           // 0.0 to 1.0
+              }}
+            }}
+            """
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: call_chat_completion(
+                    messages=[{"role": "user", "content": prompt_str}],
+                    response_format={"type": "json_object"} if "gpt" in LLM_MODEL_ID or "mini" in LLM_MODEL_ID else None,
+                    temperature=0.8,
+                    max_tokens=1000
+                )
+            )
+            content = response.choices[0].message.content
+            data = json.loads(content)
+            name = data.get("name", name)
+            age = data.get("age", age)
+            occupation = data.get("occupation", occupation)
+            bio = data.get("bio", bio)
+            v_type = data.get("vehicle_type", v_type)
+            traits = data.get("traits", traits)
+        except Exception as exc:
+            print(f"[Census] Dynamic generation LLM failed: {exc}")
+            
+    save_resident_persona(new_id, name, age, occupation, "medium", bio, v_type, traits)
+    
+    new_res = ResidentAgent(new_id)
+    new_res.vehicle_type = v_type
+    if v_type == "sedan":
+        new_res.base_capacity = 60.0
+        new_res.efficiency = 0.15
+    elif v_type == "suv":
+        new_res.base_capacity = 85.0
+        new_res.efficiency = 0.25
+    else:
+        new_res.base_capacity = 120.0
+        new_res.efficiency = 0.35
+    new_res.battery_capacity = new_res.base_capacity * new_res.state_of_health
+    new_res.battery = random.uniform(30.0, new_res.battery_capacity)
+    
+    persona = {
+        "id": new_id,
+        "name": name,
+        "age": age,
+        "occupation": occupation,
+        "income_tier": "medium",
+        "bio": bio,
+        "vehicle_type": v_type,
+        "traits": traits
+    }
+    new_res.persona = persona
+    city_engine.residents.append(new_res)
+    print(f"[Census] Spawned new resident dynamically: {name} ({new_id})")
+    return persona
+
+
+@app.get("/city/residents")
+async def city_residents_endpoint():
+    """Return all active resident personas."""
+    try:
+        from database import load_resident_personas
+        personas = load_resident_personas()
+        return {"residents": personas}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/city/residents/seed")
+async def city_residents_seed_endpoint():
+    """Manually trigger database seeding of resident personas."""
+    try:
+        await seed_resident_personas()
+        from database import load_resident_personas
+        return {"status": "success", "residents": load_resident_personas()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/city/residents/add")
+async def city_residents_add_endpoint():
+    """Add a new context-aware resident persona dynamically."""
+    try:
+        persona = await add_resident_dynamically()
+        return {"status": "success", "resident": persona}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/city/residents/{resident_id}/thoughts")
+async def city_resident_thoughts_endpoint(resident_id: str, limit: int = Query(default=20, ge=1, le=100)):
+    """Retrieve the recent thoughts history for a specific resident."""
+    try:
+        from database import load_resident_thoughts
+        thoughts = load_resident_thoughts(resident_id, limit=limit)
+        return {"resident_id": resident_id, "thoughts": thoughts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/city/residents/{resident_id}/thought")
+async def city_resident_thought_post_endpoint(resident_id: str, payload: dict):
+    """Save a new thought log for a resident (e.g. from client-side WebGPU agent)."""
+    try:
+        from database import save_resident_thought
+        tick = payload.get("tick", 0)
+        decision_type = payload.get("type", "generic")
+        thought = payload.get("thought", "")
+        sentiment = payload.get("sentiment", "neutral")
+        
+        save_resident_thought(resident_id, tick, decision_type, thought, sentiment)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

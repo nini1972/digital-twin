@@ -214,6 +214,7 @@ class ResidentAgent(Agent):
         self.current_regen_efficiency = 0.4
         self.battery_temperature = random.uniform(15.0, 25.0)
         self.payload_weight = random.uniform(50.0, 300.0)
+        self.persona = None
 
     @property
     def charging(self) -> bool:
@@ -377,8 +378,16 @@ class ResidentAgent(Agent):
                 # Score hubs by weighted distance, price, and waiting list (queue length)
                 def hub_score(h):
                     dist = ((h.x - self.x)**2 + (h.y - self.y)**2)**0.5
-                    queue_penalty = getattr(engine, 'wait_weight', 15.0) * h.queue_length
-                    return engine.distance_weight * dist + engine.price_weight * h.price + queue_penalty
+                    price_w = engine.price_weight
+                    wait_w = getattr(engine, 'wait_weight', 15.0)
+                    dist_w = engine.distance_weight
+                    if hasattr(self, 'persona') and self.persona:
+                        traits = self.persona.get('traits', {})
+                        price_w = traits.get('price_sensitivity', 0.5) * 2.0
+                        wait_w = traits.get('time_sensitivity', 0.5) * 25.0
+                        dist_w = (1.0 - traits.get('price_sensitivity', 0.5)) * 1.5
+                    queue_penalty = wait_w * h.queue_length
+                    return dist_w * dist + price_w * h.price + queue_penalty
 
                 target = min(active_hubs, key=hub_score)
                 self.state = ResidentState.SEEKING
@@ -436,6 +445,8 @@ class SimulationEngine:
                     "vehicle_type": r.vehicle_type,
                     "charging": r.charging,
                     "state": r.state.value,
+                    "persona": getattr(r, "persona", None),
+                    "latest_thought": getattr(r, "latest_thought", None),
                 }
                 for r in self.residents
             ],

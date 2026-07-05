@@ -94,6 +94,7 @@ class CitySimulationEngine(SimulationEngine):
         self.last_traffic_update_tick: int = 0
         # Callbacks invoked after each tick: (state_dict, tick_counter) → None
         self.agent_subscribers: List[Callable] = []
+        self.thought_subscribers: List[Callable] = []
         
         # --- NIEUW: Realtime marktprijs variabelen initialiseren ---
         self.current_market_price: float = 0.15  # Standaard startprijs
@@ -348,6 +349,9 @@ class CitySimulationEngine(SimulationEngine):
                     hub.free_completed_slots(residents_by_id)
                     hub.promote_from_queue()
 
+            # Track previous states
+            prev_states = {r.id: r.state for r in self.residents}
+
             for res in self.residents:
                 congestion = self.get_congestion_for(res.x, res.y)
                 drain_boost = congestion * self.CONGESTION_DRAIN_BONUS
@@ -355,6 +359,15 @@ class CitySimulationEngine(SimulationEngine):
                 self.global_battery_drain += drain_boost
                 res.update(self.hubs, self)
                 self.global_battery_drain = original_drain
+                
+                # Check if state changed and trigger subscribers
+                if res.state != prev_states[res.id]:
+                    for cb in self.thought_subscribers:
+                        try:
+                            # Fire and forget thought generation callback
+                            asyncio.create_task(cb(res, prev_states[res.id], res.state, tick_counter))
+                        except Exception as exc:
+                            print(f"[CityEngine] thought_subscriber error: {exc}")
 
             # --- Hub pricing & metrics ---
             active_hubs_count = 0
