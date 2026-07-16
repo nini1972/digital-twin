@@ -255,7 +255,8 @@ export default function CityTwinPage() {
     let cancelled = false;
     const fetchThoughts = async () => {
       try {
-        const response = await fetch(`${API_BASE}/city/residents/${selectedResidentId}/thoughts`);
+        const residentId = encodeURIComponent(selectedResidentId);
+        const response = await fetch(`${API_BASE}/city/residents/${residentId}/thoughts`);
         if (!response.ok) return;
         const data = await response.json();
         if (cancelled) return;
