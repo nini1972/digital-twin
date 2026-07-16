@@ -59,6 +59,8 @@ def _handle_set_hub_price(function_args: dict[str, Any], city_engine: Any) -> di
     hub = next((h for h in city_engine.hubs if h.id == hub_id), None)
     if not hub:
         return {"status": "error", "message": f"Hub {hub_id} not found."}
+    if price is None:
+        return {"status": "error", "message": "price parameter required."}
     hub.price = float(price)
     return {"status": "success", "message": f"Set {hub.id} price to {hub.price:.3f}."}
 

@@ -2,6 +2,7 @@ import copy
 import random
 import time
 from typing import Optional
+from simulation import WEATHER_CONFIG
 
 
 MIN_ACTIVE_HUBS_FOR_OPTIMIZATION = 2
@@ -114,7 +115,7 @@ def forecast_city_load(city_engine, horizon_ticks: int = 30) -> dict:
     avg_price = float(metrics.get("avg_price", 0.20))
     weather = str(metrics.get("weather", "sunny"))
 
-    weather_factor = {"sunny": 1.0, "storm": 1.35, "extreme_heat": 1.5, "winter": 1.2, "snow": 1.4, "rain": 1.1}.get(weather, 1.1)
+    weather_factor = WEATHER_CONFIG.get(weather, WEATHER_CONFIG["sunny"]).get("city_factor", 1.1)
     horizon_scale = horizon_ticks / 30.0
     pressure = (total_queue + 0.8 * seeking) / active_hubs
     growth = 1.0 + (0.12 * horizon_scale * weather_factor) + (0.35 * avg_congestion)
@@ -157,7 +158,20 @@ def analyze_resident_segments(city_engine) -> dict:
         segment_counts[_battery_segment_key(battery)] += 1
         state_counts[state] = state_counts.get(state, 0) + 1
 
-    pressure_index = (state_counts.get("seeking", 0) + state_counts.get("waiting", 0)) / total
+    active_hubs = [h for h in city_engine.hubs if h.active]
+    total_capacity = sum(h.capacity for h in active_hubs)
+    total_queue = sum(h.queue_length for h in active_hubs)
+    
+    if total_capacity > 0:
+        # Hub capacity utilization (queue + charging occupancy / capacity)
+        hub_pressure = total_queue / total_capacity
+    else:
+        hub_pressure = 0.0
+
+    fleet_pressure = (state_counts.get("seeking", 0) + state_counts.get("waiting", 0)) / total
+
+    # Combined pressure index considers both grid queue/chargers load and fleet seeking activity
+    pressure_index = max(hub_pressure, fleet_pressure)
     risk_band = "high" if pressure_index >= 0.4 else "medium" if pressure_index >= 0.2 else "low"
 
     return {
@@ -172,21 +186,13 @@ def analyze_resident_segments(city_engine) -> dict:
 def evaluate_weather_impact(city_engine, target_weather: str, horizon_ticks: int = 30) -> dict:
     horizon_ticks = max(5, min(120, int(horizon_ticks)))
     weather = (target_weather or "sunny").strip().lower()
-    if weather not in {"sunny", "storm", "extreme_heat", "winter", "snow", "rain"}:
+    if weather not in WEATHER_CONFIG:
         weather = "sunny"
 
-    profiles = {
-        "sunny": {"drain": 0.2, "charge": 5.0},
-        "storm": {"drain": 0.5, "charge": 2.0},
-        "extreme_heat": {"drain": 0.8, "charge": 4.0},
-        "winter": {"drain": 0.4, "charge": 3.0},
-        "snow": {"drain": 0.6, "charge": 2.5},
-        "rain": {"drain": 0.3, "charge": 4.5},
-    }
     baseline = city_engine.get_city_metrics()
-    baseline_profile = profiles["sunny"]
-    profile = profiles[weather]
-    weather_stress = (profile["drain"] / baseline_profile["drain"]) * (baseline_profile["charge"] / profile["charge"])
+    baseline_profile = WEATHER_CONFIG["sunny"]
+    profile = WEATHER_CONFIG[weather]
+    weather_stress = (profile["evaluate_drain"] / baseline_profile["evaluate_drain"]) * (baseline_profile["evaluate_charge"] / profile["evaluate_charge"])
     horizon_scale = horizon_ticks / 30.0
     projected_queue = float(baseline.get("total_queue", 0)) * (1.0 + (weather_stress - 1.0) * 0.45 * horizon_scale)
     projected_congestion = float(baseline.get("avg_congestion", 0.0)) * (1.0 + (weather_stress - 1.0) * 0.30 * horizon_scale)
@@ -196,7 +202,7 @@ def evaluate_weather_impact(city_engine, target_weather: str, horizon_ticks: int
         "Use temporary signal timing to prevent congestion spillover.",
         "Apply bounded dynamic pricing to smooth charging arrivals.",
     ]
-    if weather == "sunny":
+    if weather in {"sunny", "clear_night"}:
         actions = ["Run normal policy; reserve interventions for demand spikes only."]
 
     return {
@@ -369,11 +375,12 @@ def _normalize_scenario_action(city_engine, raw: dict, index: int) -> tuple[Opti
     normalized = {"type": action_type}
     if action_type == "set_weather":
         weather = str(raw.get("weather", "sunny")).strip().lower()
-        if weather not in {"sunny", "storm", "extreme_heat", "winter", "snow", "rain"}:
-            return None, f"scenario_actions[{index}].weather must be sunny, storm, extreme_heat, winter, snow, or rain"
+        if weather not in WEATHER_CONFIG:
+            allowed = ", ".join(sorted(WEATHER_CONFIG.keys()))
+            return None, f"scenario_actions[{index}].weather must be one of: {allowed}"
         normalized["weather"] = weather
     elif action_type in {"add_city_hub", "add_city_resident", "add_city_traffic"}:
-        normalized["count"] = int(_clamp(float(raw.get("count", 1)), 1, 20))
+        normalized["count"] = str(int(_clamp(float(raw.get("count", 1)), 1, 20)))
     elif action_type == "set_hub_price":
         hub_id = str(raw.get("hub_id", "")).strip()
         if not hub_id:
@@ -381,19 +388,19 @@ def _normalize_scenario_action(city_engine, raw: dict, index: int) -> tuple[Opti
         min_price = getattr(city_engine, "MIN_PRICE", 0.10)
         max_price = getattr(city_engine, "MAX_PRICE", 0.80)
         normalized["hub_id"] = hub_id
-        normalized["price"] = _clamp(float(raw.get("price", 0.2)), min_price, max_price)
+        normalized["price"] = str(_clamp(float(raw.get("price", 0.2)), min_price, max_price))
     elif action_type == "set_hub_active_state":
         hub_id = str(raw.get("hub_id", "")).strip()
         if not hub_id:
             return None, f"scenario_actions[{index}].hub_id is required"
         normalized["hub_id"] = hub_id
-        normalized["active"] = _parse_bool(raw.get("active", True), default=True)
+        normalized["active"] = str(_parse_bool(raw.get("active", True), default=True))
     elif action_type == "set_signal_timing":
         zone = str(raw.get("zone", "")).strip()
         if not zone:
             return None, f"scenario_actions[{index}].zone is required"
         normalized["zone"] = zone
-        normalized["multiplier"] = _clamp(float(raw.get("multiplier", 1.0)), MIN_SIGNAL_MULTIPLIER, 1.0)
+        normalized["multiplier"] = str(_clamp(float(raw.get("multiplier", 1.0)), MIN_SIGNAL_MULTIPLIER, 1.0))
     elif action_type == "reroute_traffic":
         zone = str(raw.get("zone", "")).strip()
         if not zone:
@@ -402,18 +409,18 @@ def _normalize_scenario_action(city_engine, raw: dict, index: int) -> tuple[Opti
     elif action_type == "optimize_hub_pricing":
         normalized["objective"] = str(raw.get("objective", "balanced"))
         if "floor" in raw:
-            normalized["floor"] = float(raw.get("floor"))
+            normalized["floor"] = str(float(raw.get("floor", 0.0)))
         if "ceiling" in raw:
-            normalized["ceiling"] = float(raw.get("ceiling"))
-        normalized["max_delta"] = float(raw.get("max_delta", 0.02))
-        normalized["fairness_weight"] = float(raw.get("fairness_weight", 0.5))
+            normalized["ceiling"] = str(float(raw.get("ceiling", 1.0)))
+        normalized["max_delta"] = str(float(raw.get("max_delta", 0.02)))
+        normalized["fairness_weight"] = str(float(raw.get("fairness_weight", 0.5)))
     elif action_type == "rebalance_hub_load":
         normalized["strategy"] = str(raw.get("strategy", "hybrid"))
-        normalized["max_actions"] = int(_clamp(float(raw.get("max_actions", 3)), 1, MAX_TOOL_ACTIONS))
+        normalized["max_actions"] = str(int(_clamp(float(raw.get("max_actions", 3)), 1, MAX_TOOL_ACTIONS)))
         zone = str(raw.get("zone", "")).strip()
         if zone:
             normalized["zone"] = zone
-        normalized["aggressiveness"] = _clamp(float(raw.get("aggressiveness", 0.5)), 0.1, 1.0)
+        normalized["aggressiveness"] = str(_clamp(float(raw.get("aggressiveness", 0.5)), 0.1, 1.0))
 
     return normalized, None
 
@@ -508,7 +515,7 @@ def _scenario_rebalance_hub_load(city_engine, state: dict, strategy: str = "hybr
     max_price = getattr(city_engine, "MAX_PRICE", 0.80)
     zone_congestion = state.setdefault("zone_congestion", {})
     zone_speed_limits = state.setdefault("zone_speed_limits", {})
-    actions = []
+    actions: list[dict] = []
     avg_queue = sum(float(hub.get("queue", 0.0)) for hub in hubs) / len(hubs)
     overloaded = [hub for hub in hubs if float(hub.get("queue", 0.0)) >= max(float(hub.get("capacity", 4)), avg_queue + 1)]
     underused = [hub for hub in hubs if float(hub.get("queue", 0.0)) <= max(0.0, avg_queue - 1)]
@@ -570,7 +577,7 @@ def _apply_scenario_actions(city_engine, state: dict, actions: list[dict]) -> li
         action_type = str(raw.get("type", "")).strip().lower()
         if action_type == "set_weather":
             weather = str(raw.get("weather", "sunny")).strip().lower()
-            if weather in {"sunny", "storm", "extreme_heat", "winter", "snow", "rain"}:
+            if weather in WEATHER_CONFIG:
                 state["weather"] = weather
                 applied.append({"type": "set_weather", "weather": weather})
         elif action_type == "add_city_hub":
@@ -578,33 +585,33 @@ def _apply_scenario_actions(city_engine, state: dict, actions: list[dict]) -> li
             base_idx = len(hubs)
             for index in range(count):
                 hubs.append({"id": f"sim_hub_{base_idx + index}", "x": 50.0, "y": 50.0, "price": 0.20, "queue": 0, "queue_total": 0, "waiting": 0, "charging": 0, "slots_used": 0, "capacity": 4, "active": True})
-            applied.append({"type": "add_city_hub", "count": count})
+            applied.append({"type": "add_city_hub", "count": str(count)})
         elif action_type == "add_city_resident":
             count = int(_clamp(float(raw.get("count", 1)), 1, 20))
             base_idx = len(residents)
             for index in range(count):
                 residents.append({"id": f"sim_res_{base_idx + index}", "x": 50.0, "y": 50.0, "battery": 55.0, "charging": False, "state": "driving"})
-            applied.append({"type": "add_city_resident", "count": count})
+            applied.append({"type": "add_city_resident", "count": str(count)})
         elif action_type == "add_city_traffic":
             count = int(_clamp(float(raw.get("count", 1)), 1, 20))
             base_idx = len(traffic)
             for index in range(count):
                 traffic.append({"id": f"sim_traffic_{base_idx + index}", "x": 50.0, "y": 50.0})
-            applied.append({"type": "add_city_traffic", "count": count})
+            applied.append({"type": "add_city_traffic", "count": str(count)})
         elif action_type == "set_hub_price":
             hub_id = str(raw.get("hub_id", ""))
             price = _clamp(float(raw.get("price", 0.2)), min_price, max_price)
             hub = next((candidate for candidate in hubs if str(candidate.get("id")) == hub_id), None)
             if hub:
                 hub["price"] = price
-                applied.append({"type": "set_hub_price", "hub_id": hub_id, "price": round(price, 3)})
+                applied.append({"type": "set_hub_price", "hub_id": hub_id, "price": str(round(price, 3))})
         elif action_type == "set_hub_active_state":
             hub_id = str(raw.get("hub_id", ""))
             active = bool(raw.get("active", True))
             hub = next((candidate for candidate in hubs if str(candidate.get("id")) == hub_id), None)
             if hub:
                 hub["active"] = active
-                applied.append({"type": "set_hub_active_state", "hub_id": hub_id, "active": active})
+                applied.append({"type": "set_hub_active_state", "hub_id": hub_id, "active": str(active)})
         elif action_type == "set_signal_timing":
             zone = str(raw.get("zone", ""))
             if zone:
@@ -612,16 +619,16 @@ def _apply_scenario_actions(city_engine, state: dict, actions: list[dict]) -> li
                 zone_speed_limits[zone] = multiplier
                 if zone in zone_congestion:
                     zone_congestion[zone] = _clamp(float(zone_congestion[zone]) * multiplier, 0.0, 1.0)
-                applied.append({"type": "set_signal_timing", "zone": zone, "multiplier": round(multiplier, 2)})
+                applied.append({"type": "set_signal_timing", "zone": zone, "multiplier": str(round(multiplier, 2))})
         elif action_type == "reroute_traffic":
             zone = str(raw.get("zone", ""))
             if zone and zone in zone_congestion:
                 zone_congestion[zone] = _clamp(float(zone_congestion[zone]) * 0.75, 0.0, 1.0)
                 applied.append({"type": "reroute_traffic", "zone": zone})
         elif action_type == "optimize_hub_pricing":
-            applied.append({"type": "optimize_hub_pricing", "outcome": _scenario_optimize_hub_pricing(city_engine, state, objective=str(raw.get("objective", "balanced")), floor=raw.get("floor"), ceiling=raw.get("ceiling"), max_delta=float(raw.get("max_delta", 0.02)), fairness_weight=float(raw.get("fairness_weight", 0.5)))})
+            applied.append({"type": "optimize_hub_pricing", "outcome": str(_scenario_optimize_hub_pricing(city_engine, state, objective=str(raw.get("objective", "balanced")), floor=raw.get("floor"), ceiling=raw.get("ceiling"), max_delta=float(raw.get("max_delta", 0.02)), fairness_weight=float(raw.get("fairness_weight", 0.5))))})
         elif action_type == "rebalance_hub_load":
-            applied.append({"type": "rebalance_hub_load", "outcome": _scenario_rebalance_hub_load(city_engine, state, strategy=str(raw.get("strategy", "hybrid")), max_actions=int(raw.get("max_actions", 3)), zone=raw.get("zone"), aggressiveness=float(raw.get("aggressiveness", 0.5)))})
+            applied.append({"type": "rebalance_hub_load", "outcome": str(_scenario_rebalance_hub_load(city_engine, state, strategy=str(raw.get("strategy", "hybrid")), max_actions=int(raw.get("max_actions", 3)), zone=raw.get("zone"), aggressiveness=float(raw.get("aggressiveness", 0.5))))})
 
     return applied
 
@@ -637,10 +644,10 @@ def _run_projection(city_engine, state: dict, horizon_ticks: int, runs: int) -> 
         hubs = simulation.get("hubs", [])
         residents = simulation.get("residents", [])
         weather = str(simulation.get("weather", "sunny"))
-        
+        w_config = WEATHER_CONFIG.get(weather, WEATHER_CONFIG["sunny"])
         # Weather affects both drain rate (more seeking) and charging speed
-        weather_drain_mult = {"sunny": 1.0, "storm": 1.3, "extreme_heat": 1.45, "winter": 1.2, "snow": 1.35, "rain": 1.1}.get(weather, 1.0)
-        weather_charge_mult = {"sunny": 1.0, "storm": 0.6, "extreme_heat": 0.8, "winter": 0.7, "snow": 0.5, "rain": 0.9}.get(weather, 1.0)
+        weather_drain_mult = w_config["drain_multiplier"]
+        weather_charge_mult = w_config["charge_multiplier"]
         
         trajectory = []
         for _tick in range(horizon_ticks):
@@ -654,7 +661,6 @@ def _run_projection(city_engine, state: dict, horizon_ticks: int, runs: int) -> 
             # Simple state transition modeling for credibility
             driving = [r for r in residents if r.get("state") == "driving"]
             seeking = [r for r in residents if r.get("state") == "seeking"]
-            waiting = [r for r in residents if r.get("state") == "waiting"]
             charging = [r for r in residents if r.get("state") == "charging"]
             
             # 1. Driving -> Seeking (battery drain)

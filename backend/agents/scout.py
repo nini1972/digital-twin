@@ -99,6 +99,21 @@ class EVScoutAgent:
                         "ts": datetime.now().isoformat(),
                     })
 
+        # Grid wholesale price or congestion risk spikes
+        wholesale_price = state.get("market_price_eur_kwh", 0.15)
+        congestion_risk = str(state.get("market_congestion_risk", "LAAG")).upper()
+        if wholesale_price >= 0.35 or congestion_risk in ("HOOG", "HIGH"):
+            last = self._last_saturation_tick.get("grid_stress", -20)
+            if tick - last >= 10:
+                self._last_saturation_tick["grid_stress"] = tick
+                await bus.publish(CHANNEL_SCOUT_EV, {
+                    "event": "grid_stress",
+                    "wholesale_price": wholesale_price,
+                    "congestion_risk": congestion_risk,
+                    "tick": tick,
+                    "ts": datetime.now().isoformat(),
+                })
+
 
 class TrafficScoutAgent:
     """Monitors zone congestion and publishes traffic events."""

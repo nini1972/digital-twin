@@ -1,5 +1,4 @@
 import heapq
-import math
 from typing import List, Tuple, Callable
 
 def discretize(val: float, step: int = 10) -> int:
@@ -8,10 +7,14 @@ def discretize(val: float, step: int = 10) -> int:
 def get_neighbors(node: Tuple[int, int], grid_max: int = 100, step: int = 10) -> List[Tuple[int, int]]:
     x, y = node
     neighbors = []
-    if x - step >= 0: neighbors.append((x - step, y))
-    if x + step <= grid_max: neighbors.append((x + step, y))
-    if y - step >= 0: neighbors.append((x, y - step))
-    if y + step <= grid_max: neighbors.append((x, y + step))
+    if x - step >= 0:
+        neighbors.append((x - step, y))
+    if x + step <= grid_max:
+        neighbors.append((x + step, y))
+    if y - step >= 0:
+        neighbors.append((x, y - step))
+    if y + step <= grid_max:
+        neighbors.append((x, y + step))
     return neighbors
 
 def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> float:
@@ -35,9 +38,9 @@ def astar_path(
     if start_node == target_node:
         return [target_pos]
 
-    open_set = []
+    open_set: list[Tuple[float, Tuple[int, int]]] = []
     heapq.heappush(open_set, (0, start_node))
-    came_from = {}
+    came_from: dict[Tuple[int, int], Tuple[int, int]] = {}
     
     g_score = {start_node: 0.0}
     f_score = {start_node: heuristic(start_node, target_node)}

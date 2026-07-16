@@ -4,6 +4,106 @@ from enum import Enum
 from typing import List
 from pathfinding import astar_path
 
+WEATHER_CONFIG = {
+    "sunny": {
+        "hvac_drain": 0.05,
+        "ambient_temp": 20.0,
+        "charge_multiplier": 1.0,
+        "drain_multiplier": 1.0,
+        "evaluate_drain": 0.2,
+        "evaluate_charge": 5.0,
+        "city_factor": 1.0,
+        "grid_co2_intensity": 80.0,
+        "seek_threshold": 30,
+        "radius_multiplier": 1.0,
+    },
+    "clear_night": {
+        "hvac_drain": 0.05,
+        "ambient_temp": 10.0,
+        "charge_multiplier": 1.0,
+        "drain_multiplier": 1.0,
+        "evaluate_drain": 0.2,
+        "evaluate_charge": 5.0,
+        "city_factor": 1.0,
+        "grid_co2_intensity": 150.0,
+        "seek_threshold": 30,
+        "radius_multiplier": 1.0,
+    },
+    "storm": {
+        "hvac_drain": 0.05,
+        "ambient_temp": 10.0,
+        "charge_multiplier": 0.6,
+        "drain_multiplier": 1.3,
+        "evaluate_drain": 0.5,
+        "evaluate_charge": 2.0,
+        "city_factor": 1.35,
+        "grid_co2_intensity": 240.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "extreme_heat": {
+        "hvac_drain": 0.15,
+        "ambient_temp": 35.0,
+        "charge_multiplier": 0.8,
+        "drain_multiplier": 1.45,
+        "evaluate_drain": 0.8,
+        "evaluate_charge": 4.0,
+        "city_factor": 1.5,
+        "grid_co2_intensity": 150.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "extreme_cold": {
+        "hvac_drain": 0.15,
+        "ambient_temp": -5.0,
+        "charge_multiplier": 0.6,
+        "drain_multiplier": 1.2,
+        "evaluate_drain": 0.4,
+        "evaluate_charge": 3.0,
+        "city_factor": 1.2,
+        "grid_co2_intensity": 240.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "winter": {
+        "hvac_drain": 0.15,
+        "ambient_temp": 0.0,
+        "charge_multiplier": 0.6,
+        "drain_multiplier": 1.2,
+        "evaluate_drain": 0.4,
+        "evaluate_charge": 3.0,
+        "city_factor": 1.2,
+        "grid_co2_intensity": 240.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "snow": {
+        "hvac_drain": 0.12,
+        "ambient_temp": -2.0,
+        "charge_multiplier": 0.5,
+        "drain_multiplier": 1.35,
+        "evaluate_drain": 0.6,
+        "evaluate_charge": 2.5,
+        "city_factor": 1.4,
+        "grid_co2_intensity": 240.0,
+        "seek_threshold": 40,
+        "radius_multiplier": 2.0,
+    },
+    "rain": {
+        "hvac_drain": 0.05,
+        "ambient_temp": 12.0,
+        "charge_multiplier": 0.9,
+        "drain_multiplier": 1.1,
+        "evaluate_drain": 0.3,
+        "evaluate_charge": 4.5,
+        "city_factor": 1.1,
+        "grid_co2_intensity": 150.0,
+        "seek_threshold": 30,
+        "radius_multiplier": 1.0,
+    }
+}
+
+
 class ResidentState(Enum):
     DRIVING = "driving"
     SEEKING = "seeking"
@@ -63,15 +163,24 @@ class ChargingHubAgent(Agent):
         if resident_id in self.waiting_queue:
             self.waiting_queue.remove(resident_id)
 
-    def update(self):
+    def update(self, engine=None):
         if not self.active:
             return
         # Autonomous pricing logic based on demand
         demand = self.queue_length
-        if demand > 2:
-            self.price += 0.01  # Increase price if busy
-        elif demand == 0 and self.price > 0.15:
-            self.price -= 0.01  # Lower price to attract customers
+        
+        # Determine the price floor based on wholesale rate
+        floor_price = 0.15
+        if engine is not None and hasattr(engine, "current_market_price"):
+            # Enforce floor: wholesale cost + small retail margin (e.g. 0.02 EUR/kWh)
+            floor_price = max(0.15, getattr(engine, "current_market_price", 0.10) + 0.02)
+
+        if self.price < floor_price:
+            self.price = floor_price  # Instantly adjust up to avoid selling at a loss
+        elif demand > 2:
+            self.price = min(0.80, self.price + 0.01)  # Increase price if busy
+        elif demand == 0 and self.price > floor_price:
+            self.price = max(floor_price, self.price - 0.01)  # Lower price, but respect the floor
 
 
 class ResidentAgent(Agent):
@@ -105,6 +214,7 @@ class ResidentAgent(Agent):
         self.current_regen_efficiency = 0.4
         self.battery_temperature = random.uniform(15.0, 25.0)
         self.payload_weight = random.uniform(50.0, 300.0)
+        self.persona = None
 
     @property
     def charging(self) -> bool:
@@ -138,17 +248,10 @@ class ResidentAgent(Agent):
         if hasattr(engine, 'get_congestion_for'):
             congestion = engine.get_congestion_for(self.x, self.y)
 
-        # Base HVAC drain (idle drain)
-        hvac_drain = 0.05
-        ambient_temp = 20.0
-        if weather == "extreme_cold":
-            hvac_drain = 0.15
-            ambient_temp = -5.0
-        elif weather == "extreme_heat":
-            hvac_drain = 0.15
-            ambient_temp = 35.0
-        elif weather == "storm":
-            ambient_temp = 10.0
+        # Retrieve weather configuration (default to nominal sunny settings if weather is unrecognized)
+        w_config = WEATHER_CONFIG.get(weather, WEATHER_CONFIG["sunny"])
+        hvac_drain = w_config["hvac_drain"]
+        ambient_temp = w_config["ambient_temp"]
 
         # Thermal dynamics (slowly adjust to ambient)
         self.battery_temperature += (ambient_temp - self.battery_temperature) * 0.05
@@ -170,10 +273,7 @@ class ResidentAgent(Agent):
                 charge_rate *= 0.5
             
             # Weather impacts on charging (Coldgate & Thermal Throttling)
-            if weather == "extreme_cold":
-                charge_rate *= 0.6
-            elif weather == "extreme_heat":
-                charge_rate *= 0.8
+            charge_rate *= w_config["charge_multiplier"]
             
             # Charging heats up the battery
             self.battery_temperature += 0.5
@@ -209,12 +309,21 @@ class ResidentAgent(Agent):
             elif self.state == ResidentState.SEEKING:
                 self._compute_path(engine, self.destination_x, self.destination_y)
 
-        # Dynamic speed calculation based on congestion and randomness
+        # Dynamic speed calculation based on congestion, speed limits, and randomness
         if self.state in (ResidentState.DRIVING, ResidentState.SEEKING):
             speed_variance = random.uniform(0.85, 1.15)
             # Speed is reduced by congestion (max 80% reduction)
             congestion_factor = max(0.2, 1.0 - (congestion * 0.8))
-            self.speed = self.base_speed * speed_variance * congestion_factor
+            
+            # Retrieve speed limit multiplier for the current zone from the engine
+            speed_multiplier = 1.0
+            if hasattr(engine, "_zone_key"):
+                zone_key = engine._zone_key(self.x, self.y)
+                manual_mult = getattr(engine, "zone_speed_limits", {}).get(zone_key, 1.0)
+                incident_mult = getattr(engine, "traffic_incident_speed_limits", {}).get(zone_key, 1.0)
+                speed_multiplier = min(manual_mult, incident_mult)
+                
+            self.speed = self.base_speed * speed_variance * congestion_factor * speed_multiplier
 
         distance_moved = 0.0
         if self.path:
@@ -258,13 +367,9 @@ class ResidentAgent(Agent):
         # Recompute percentage for threshold checks
         battery_percentage = (self.battery / self.battery_capacity) * 100
 
-        # Determine battery threshold and search radius multiplier based on weather
-        if weather in ("storm", "extreme_heat"):
-            seek_threshold = 40
-            radius_multiplier = 2.0
-        else:
-            seek_threshold = 30
-            radius_multiplier = 1.0
+        # Determine battery threshold and search radius multiplier based on weather configuration
+        seek_threshold = w_config["seek_threshold"]
+        radius_multiplier = w_config["radius_multiplier"]
 
         # Seek charge if battery percentage is below threshold
         if battery_percentage < seek_threshold and self.state == ResidentState.DRIVING:
@@ -273,8 +378,16 @@ class ResidentAgent(Agent):
                 # Score hubs by weighted distance, price, and waiting list (queue length)
                 def hub_score(h):
                     dist = ((h.x - self.x)**2 + (h.y - self.y)**2)**0.5
-                    queue_penalty = getattr(engine, 'wait_weight', 15.0) * h.queue_length
-                    return engine.distance_weight * dist + engine.price_weight * h.price + queue_penalty
+                    price_w = engine.price_weight
+                    wait_w = getattr(engine, 'wait_weight', 15.0)
+                    dist_w = engine.distance_weight
+                    if hasattr(self, 'persona') and self.persona:
+                        traits = self.persona.get('traits', {})
+                        price_w = traits.get('price_sensitivity', 0.5) * 2.0
+                        wait_w = traits.get('time_sensitivity', 0.5) * 25.0
+                        dist_w = (1.0 - traits.get('price_sensitivity', 0.5)) * 1.5
+                    queue_penalty = wait_w * h.queue_length
+                    return dist_w * dist + price_w * h.price + queue_penalty
 
                 target = min(active_hubs, key=hub_score)
                 self.state = ResidentState.SEEKING
@@ -332,6 +445,8 @@ class SimulationEngine:
                     "vehicle_type": r.vehicle_type,
                     "charging": r.charging,
                     "state": r.state.value,
+                    "persona": getattr(r, "persona", None),
+                    "latest_thought": getattr(r, "latest_thought", None),
                 }
                 for r in self.residents
             ],

@@ -58,14 +58,13 @@ export default function LandingPage() {
     <main className="relative h-screen w-full overflow-hidden bg-black text-white">
       {/* Background video (plays once); place digital-twin-hero.mp4 in /public */}
       <video
-        {...({ fetchPriority: "high" } as any)}
+        {...({ fetchPriority: "high" } as Record<string, string>)}
         ref={videoRef}
         className="absolute inset-0 h-full w-full object-cover opacity-90"
         autoPlay
         muted
         playsInline
         preload="auto"
-        decoding="async"
         width={1920}
         height={1080}
         onEnded={() => setShowUI(true)}

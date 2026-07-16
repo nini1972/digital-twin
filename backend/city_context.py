@@ -83,13 +83,17 @@ def city_prompt(sim_state: dict | None = None, chief_mode: str = "advisor") -> s
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 def _format_sim_state(state: dict) -> str:
     residents = state.get("residents", [])
     hubs = state.get("hubs", [])
     traffic = state.get("traffic", [])
     zone_congestion: dict = state.get("zone_congestion", {})
     weather = state.get("weather", "unknown")
+
+    # --- Realtime marktprijzen en netstatus uitlezen uit de state ---
+    market_price = state.get("market_price_eur_kwh", 0.15)
+    market_risk = state.get("market_congestion_risk", "LAAG")
+    market_demand = state.get("market_demand_kw", 90.0)
 
     charging = sum(1 for r in residents if r.get("charging"))
     seeking = sum(1 for r in residents if r.get("state") == "seeking")
@@ -103,6 +107,30 @@ def _format_sim_state(state: dict) -> str:
     )
     total_queue = sum(h.get("queue", 0) for h in active_hubs)
 
+    # --- AGGREGATE NEW EV BATTERY HEALTH & TEMP ---
+    soh_values = [r.get("soh", 1.0) for r in residents]
+    avg_soh = sum(soh_values) / len(soh_values) if soh_values else 1.0
+    degraded_ev_count = sum(1 for r in residents if r.get("soh", 1.0) < 0.88)
+    temp_values = [r.get("battery_temperature", 20.0) for r in residents]
+    avg_battery_temp = sum(temp_values) / len(temp_values) if temp_values else 20.0
+
+    # --- CALCULATE POWER & ENERGY DEMAND ---
+    ev_power_demand_kw = charging * 22.0
+    total_city_grid_load_kw = ev_power_demand_kw + market_demand
+
+    # --- CALCULATE ENVIRONMENTAL CO2 METRICS ---
+    if weather == "sunny":
+        grid_co2_intensity = 80.0  # High solar share
+    elif weather in ["storm", "extreme_cold"]:
+        grid_co2_intensity = 240.0 # High fossil backup heating
+    else:
+        grid_co2_intensity = 150.0 # Standard BE baseline
+        
+    ev_co2_emissions_kg_h = (ev_power_demand_kw * grid_co2_intensity) / 1000.0
+    avg_cong = sum(zone_congestion.values()) / len(zone_congestion) if zone_congestion else 0.0
+    traffic_co2_emissions_kg_h = len(traffic) * 0.12 * (1.0 + avg_cong * 1.5)
+    co2_saved_kg_h = charging * 1.8 * (1.0 - (grid_co2_intensity / 300.0))
+
     hotspot_zones = [
         f"zone {k} ({v:.0%})"
         for k, v in sorted(zone_congestion.items(), key=lambda x: -x[1])
@@ -113,10 +141,29 @@ def _format_sim_state(state: dict) -> str:
         "## Live City State\n",
         f"- Weather: **{weather}**",
         f"- Traffic vehicles on grid: **{len(traffic)}**",
-        f"",
-        f"### EV Fleet ({len(residents)} residents)",
-        f"- Charging: {charging} | Seeking hub: {seeking} | Driving: {driving} | Critical battery: {critical}",
-        f"",
+        "",
+        "### Wholesale Energy Market Data",
+        f"- Current Wholesale Electricity Price: **€{market_price:.4f} per kWh**",
+        f"- Grid Congestion Risk: **{market_risk}**",
+        f"- City Baseload Demand: **{market_demand:.1f} kW**",
+        "*(Note: Use this data to strategically guide pricing optimizations)*",
+        "",
+        "### Local Energy & Grid Load",
+        f"- EV Charging Load: **{ev_power_demand_kw:.1f} kW**",
+        f"- Total Grid Load (EV + Baseload): **{total_city_grid_load_kw:.1f} kW**",
+        "",
+        f"### EV Fleet & Battery Performance ({len(residents)} residents)",
+        f"- Fleet States: Charging: {charging} | Seeking: {seeking} | Driving: {driving} | Critical: {critical}",
+        f"- Average Fleet SOH (Battery Health): **{avg_soh * 100.0:.1f}%**",
+        f"- Highly Degraded EVs (SOH < 88%): **{degraded_ev_count}**",
+        f"- Average Battery Temperature: **{avg_battery_temp:.1f}°C**",
+        "",
+        "### Environmental Impact",
+        f"- Grid CO2 Intensity: **{grid_co2_intensity:.1f} g CO2/kWh**",
+        f"- EV Charging CO2 Footprint: **{ev_co2_emissions_kg_h:.2f} kg CO2/h**",
+        f"- Conventional Traffic CO2 Footprint: **{traffic_co2_emissions_kg_h:.2f} kg CO2/h**",
+        f"- Net CO2 Displaced/Saved by EVs: **{co2_saved_kg_h:.2f} kg CO2/h**",
+        "",
         f"### Charging Infrastructure ({len(active_hubs)}/{len(hubs)} hubs active)",
         f"- Average price: **${avg_price:.3f}/kWh**",
         f"- Total queue length: **{total_queue}** residents waiting",
@@ -137,11 +184,32 @@ def _format_sim_state(state: dict) -> str:
         lines.append("- No significant congestion detected.")
 
     if zone_congestion:
-        avg_cong = sum(zone_congestion.values()) / len(zone_congestion)
         lines.append(f"- City-wide average congestion: **{avg_cong:.0%}**")
 
-    return "\n".join(lines)
+    # --- Speed Limits & Incidents ---
+    active_manual_limits = [f"zone {k} ({mult:.0%})" for k, mult in state.get("zone_speed_limits", {}).items() if mult < 1.0]
+    active_incident_limits = [f"zone {k} ({mult:.0%})" for k, mult in state.get("traffic_incident_speed_limits", {}).items() if mult < 1.0]
+    
+    lines.append("")
+    lines.append("### Traffic Restrictions & Incidents")
+    if active_manual_limits:
+        lines.append(f"- Manual/Oracle throttles: {', '.join(active_manual_limits)}")
+    else:
+        lines.append("- No manual speed restrictions.")
+        
+    if active_incident_limits:
+        lines.append(f"- Accident/Incident speed drops: {', '.join(active_incident_limits)}")
+    else:
+        lines.append("- No incident-based speed restrictions.")
 
+    live_events = state.get("live_traffic_events", [])
+    if live_events:
+        lines.append("")
+        lines.append("#### Active Traffic Incidents Feed:")
+        for ev in live_events:
+            lines.append(f"  • **[{ev['event_type'].upper()}]** in zone **{ev['zone_key']}**: {ev['description']}")
+
+    return "\n".join(lines)
 
 def _build_memory_query(state: dict) -> str:
     """Construct a natural-language query from live state for semantic recall."""

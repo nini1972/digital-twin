@@ -111,7 +111,7 @@ class CityToolTests(unittest.TestCase):
         self.assertEqual(segments["battery_segments"]["battery_low"]["count"], 1)
         self.assertEqual(segments["state_segments"]["charging"]["count"], 1)
         self.assertEqual(segments["demand_risk_band"], "high")
-        self.assertEqual(segments["charging_pressure_index"], 0.5)
+        self.assertAlmostEqual(segments["charging_pressure_index"], 0.917, places=3)
 
     def test_evaluate_weather_impact_increases_stress_for_storm(self):
         storm = server._evaluate_weather_impact("storm", horizon_ticks=30)

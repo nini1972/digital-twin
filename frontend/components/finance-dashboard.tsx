@@ -12,15 +12,27 @@ import {
     Terminal, 
     Layers, 
     Check, 
-    TrendingDown, 
     PieChart, 
     ShieldAlert, 
-    ExternalLink 
+    BookOpen,
+    Award,
+    Send,
+    Clock,
+    Activity
 } from 'lucide-react';
 
 // ============================================================================
 // Types
 // ============================================================================
+
+interface A2UIComponent {
+    [key: string]: any;
+}
+
+interface A2UISurface {
+    title?: string;
+    components: A2UIComponent[];
+}
 
 interface FinanceDashboardProps {
     financeState: {
@@ -37,8 +49,44 @@ interface FinanceDashboardProps {
             details: string;
             status: string;
         }>;
+        skills?: Array<{
+            id: string;
+            name: string;
+            description: string;
+            version: string;
+            category: string;
+            requires_tools: string[];
+            procedure: string;
+            filename: string;
+        }>;
+        midnight_audit_run?: {
+            timestamp: string;
+            status: string;
+            violations_found: number;
+            alerts: Array<{
+                id: string;
+                severity: string;
+                title: string;
+                message: string;
+                reremediation?: string;
+                remediation?: string;
+            }>;
+            integrations: {
+                teams: {
+                    title: string;
+                    adaptive_card: any;
+                };
+                outlook: {
+                    subject: string;
+                    html_body: string;
+                };
+                whatsapp: {
+                    message: string;
+                };
+            };
+        } | null;
     };
-    activeA2UISurface: any;
+    activeA2UISurface: A2UISurface | null;
     onReset: () => Promise<void>;
     onRefresh: () => Promise<void>;
 }
@@ -69,17 +117,21 @@ const formatPercent = (val: number | undefined | null) => {
 // Main Dashboard Component
 // ============================================================================
 
-export default function FinanceDashboard({ 
+function FinanceDashboard({ 
     financeState, 
     activeA2UISurface, 
     onReset, 
     onRefresh 
 }: FinanceDashboardProps) {
-    const [activeTab, setActiveTab] = useState<'reports' | 'consolidation' | 'review' | 'logs'>('reports');
+    const [activeTab, setActiveTab] = useState<'reports' | 'consolidation' | 'review' | 'logs' | 'skills'>('reports');
     const [selectedCompany, setSelectedCompany] = useState<string>('parent_nv');
     const [selectedPeriod, setSelectedPeriod] = useState<string>('FY25_actual');
     const [isResetting, setIsResetting] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    
+    // Skills Hub UI state
+    const [expandedSkills, setExpandedSkills] = useState<Record<string, boolean>>({});
+    const [activePlatformAlert, setActivePlatformAlert] = useState<'teams' | 'outlook' | 'whatsapp'>('teams');
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
@@ -146,6 +198,7 @@ export default function FinanceDashboard({
                         { id: 'reports', label: 'Financial Statements', icon: FileText },
                         { id: 'consolidation', label: 'Consolidation Worksheet', icon: Layers },
                         { id: 'review', label: 'Audits & Analytics', icon: ShieldAlert },
+                        { id: 'skills', label: 'Skills Hub', icon: Award },
                         { id: 'logs', label: 'Agent Cortex Logs', icon: Terminal },
                     ].map((tab) => {
                         const Icon = tab.icon;
@@ -173,6 +226,76 @@ export default function FinanceDashboard({
 
             {/* Tabs Content Scroll Area */}
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
+                
+                {/* MORNING AUDIT ALERT BANNER */}
+                {financeState.midnight_audit_run && (
+                    <div className="p-4 bg-gradient-to-r from-amber-500/10 via-slate-900/40 to-emerald-500/10 border border-slate-800/80 rounded-xl relative overflow-hidden backdrop-blur-md shadow-lg">
+                        <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+                        <div className="absolute bottom-0 left-0 w-48 h-48 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
+                        
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div className="flex gap-3 items-start">
+                                <div className="p-2 bg-amber-500/15 text-amber-400 border border-amber-500/20 rounded-lg shrink-0 mt-0.5 animate-pulse">
+                                    <AlertTriangle className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <h4 className="text-sm font-bold text-slate-200">Overnight Cognitive Audit Report</h4>
+                                        <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 text-[9px] font-bold border border-amber-500/15 rounded-full">
+                                            {financeState.midnight_audit_run.violations_found} Compliance Warnings
+                                        </span>
+                                        <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                                            <Clock className="w-3 h-3" />
+                                            Ran at {new Date(financeState.midnight_audit_run.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} (Overnight Cron)
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-400 mt-1.5 leading-relaxed max-w-3xl">
+                                        Dominique's Twin ran the multi-agent cognitive ledger audit overnight. Discrepancies were identified in parent_nv research capitalization and flanders_bv intercompany balances. Enterprise alerts were automatically compiled.
+                                    </p>
+                                    
+                                    {/* Action items preview */}
+                                    <div className="mt-3 flex gap-2 flex-wrap">
+                                        {financeState.midnight_audit_run.alerts.map((alert) => (
+                                            <div key={alert.id} className="text-[11px] px-2.5 py-1 bg-slate-900/60 border border-slate-800 rounded-lg text-slate-300 flex items-center gap-1.5">
+                                                <span className={`w-1.5 h-1.5 rounded-full ${alert.severity === 'critical' ? 'bg-rose-500' : 'bg-amber-400'}`} />
+                                                <span className="font-semibold text-slate-200">{alert.title}:</span>
+                                                <span className="text-slate-400 truncate max-w-xs">{alert.message}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="flex md:flex-col items-stretch justify-center gap-2 shrink-0">
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            const res = await fetch(`http://localhost:8000/api/finance/trigger-midnight-audit`, { method: 'POST' });
+                                            if (res.ok) {
+                                                await handleRefresh();
+                                                alert("Overnight ledger review re-run executed successfully! Observe the logs in Agent Cortex Logs or Skills Hub tab.");
+                                            }
+                                        } catch (e) {
+                                            console.error(e);
+                                        }
+                                    }}
+                                    className="px-3.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 hover:border-emerald-500/40 text-emerald-400 text-xs font-semibold rounded-lg transition-all text-center flex items-center gap-1.5 justify-center cursor-pointer hover:scale-[1.02] active:scale-95"
+                                >
+                                    <Activity className="w-3.5 h-3.5 animate-pulse" />
+                                    Trigger Audit Run
+                                </button>
+                                
+                                <button
+                                    onClick={() => setActiveTab('skills')}
+                                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg border border-slate-700/50 hover:text-white transition-all text-center flex items-center gap-1.5 justify-center cursor-pointer"
+                                >
+                                    <Award className="w-3.5 h-3.5" />
+                                    View Enterprise Alerts
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 
                 {/* 1. REPORTS TAB */}
                 {activeTab === 'reports' && (
@@ -1046,6 +1169,301 @@ export default function FinanceDashboard({
                     </div>
                 )}
 
+                {/* 5. SKILLS HUB TAB */}
+                {activeTab === 'skills' && (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn text-slate-300">
+                        {/* Left/Main Column - Skills Playbook Directory */}
+                        <div className="lg:col-span-2 space-y-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                                        <BookOpen className="w-4 h-4 text-emerald-400" />
+                                        Procedural Playbook Memory (Tier 3)
+                                    </h3>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        AI-compiled step-by-step auditing, compliance and consolidation checklists stored in <code className="text-slate-400 font-mono">backend/finance/skills/</code>.
+                                    </p>
+                                </div>
+                                <span className="px-2.5 py-1 bg-slate-900 border border-slate-800 rounded-lg text-slate-400 font-mono text-[10px]">
+                                    {financeState.skills?.length || 0} Playbooks Active
+                                </span>
+                            </div>
+
+                            <div className="space-y-4">
+                                {financeState.skills && financeState.skills.length > 0 ? (
+                                    financeState.skills.map((skill) => {
+                                        const isExpanded = !!expandedSkills[skill.id];
+                                        return (
+                                            <div key={skill.id} className="bg-slate-900/40 border border-slate-800/80 rounded-xl overflow-hidden backdrop-blur-md transition-all duration-300 hover:border-slate-700/60 shadow-md">
+                                                <div className="p-4 flex items-start justify-between gap-4">
+                                                    <div className="flex gap-3">
+                                                        <div className="p-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/15 rounded-xl shrink-0 mt-0.5">
+                                                            <Award className="w-5 h-5" />
+                                                        </div>
+                                                        <div>
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <h4 className="text-sm font-bold text-slate-200 font-mono">{skill.name}</h4>
+                                                                <span className="px-2 py-0.5 bg-slate-950 text-slate-400 text-[9px] border border-slate-800 rounded-full font-sans uppercase">
+                                                                    {skill.category || 'compliance-audit'}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                                                                {skill.description}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => setExpandedSkills(prev => ({ ...prev, [skill.id]: !isExpanded }))}
+                                                        className="px-2.5 py-1.5 bg-slate-850 hover:bg-slate-800 text-slate-300 text-[11px] font-semibold rounded-lg border border-slate-850 transition-all cursor-pointer select-none"
+                                                    >
+                                                        {isExpanded ? 'Hide Steps' : 'View Steps'}
+                                                    </button>
+                                                </div>
+
+                                                {isExpanded && (
+                                                    <div className="border-t border-slate-800/60 bg-slate-950/40 p-4 space-y-4 animate-slideDown">
+                                                        <div className="flex flex-wrap gap-4 text-[11px]">
+                                                            <div className="flex items-center gap-1.5 text-slate-400">
+                                                                <span className="text-slate-500 font-sans">Tools Required:</span>
+                                                                <div className="flex gap-1">
+                                                                    {(skill.requires_tools || []).map((t, idx) => (
+                                                                        <span key={idx} className="px-2 py-0.5 bg-slate-900 border border-slate-800 text-slate-300 rounded font-mono">
+                                                                            {t}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-1.5 text-slate-400">
+                                                                <span className="text-slate-500">File Path:</span>
+                                                                <span className="font-mono text-slate-400 text-slate-300">backend/finance/skills/{skill.id}.md</span>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="space-y-2">
+                                                            <h5 className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Playbook Procedure</h5>
+                                                            <div className="bg-slate-950 p-3 rounded-lg border border-slate-900 font-mono text-xs text-slate-300 space-y-2 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                                                                {skill.procedure}
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex justify-end pt-2">
+                                                            <button
+                                                                onClick={async () => {
+                                                                    try {
+                                                                        const res = await fetch(`http://localhost:8000/api/finance/trigger-midnight-audit`, { method: 'POST' });
+                                                                        if (res.ok) {
+                                                                            await handleRefresh();
+                                                                            alert(`Successfully executed check based on playbook ${skill.name}! Real-time trace logged.`);
+                                                                        }
+                                                                    } catch (err) {
+                                                                        console.error(err);
+                                                                    }
+                                                                }}
+                                                                className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 hover:border-emerald-500/40 text-emerald-400 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+                                                            >
+                                                                <Activity className="w-3.5 h-3.5" />
+                                                                Execute Verification Run
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })
+                                ) : (
+                                    <div className="p-12 text-center border border-dashed border-slate-800 rounded-xl bg-slate-900/5">
+                                        <Award className="w-10 h-10 text-slate-600 mx-auto mb-3 animate-pulse" />
+                                        <h3 className="text-sm font-semibold text-slate-300">No Procedural Playbooks</h3>
+                                        <p className="text-xs text-slate-500 mt-2 max-w-sm mx-auto">
+                                            No pre-compiled playbooks are registered. Tell Dominique's twin: <span className="text-emerald-400">"Create a playbook reconcile_ledgers to balance parent and Flanders"</span> to compile one dynamically!
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Right Column - Cortex Logs & Enterprise Alerts */}
+                        <div className="space-y-6">
+                            {/* Real-time Typewriter Cortex Logs Panel */}
+                            <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 space-y-3 backdrop-blur-md shadow-md">
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                                        <Terminal className="w-4 h-4 text-emerald-400 animate-pulse" />
+                                        Cortex Logs
+                                    </h4>
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+                                </div>
+                                
+                                <div className="p-3 bg-slate-950 border border-slate-900 rounded-lg font-mono text-[11px] space-y-3 max-h-[180px] overflow-y-auto leading-relaxed text-slate-400 scrollbar-thin">
+                                    {financeState.logs && financeState.logs.length > 0 ? (
+                                        financeState.logs.slice(-6).map((log, idx) => (
+                                            <div key={idx} className="border-b border-slate-900 pb-2 last:border-0 last:pb-0 space-y-0.5">
+                                                <div className="flex items-center justify-between text-[9px] text-slate-500">
+                                                    <span className="font-bold text-slate-300">{log.agent} › {log.action}</span>
+                                                    <span>{new Date(log.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}</span>
+                                                </div>
+                                                <p className="text-slate-400 leading-normal line-clamp-2">{log.details}</p>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <p className="text-slate-600 text-center py-4">No cognitive cortex logs yet.</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Enterprise Integrations Mockup Panel */}
+                            {financeState.midnight_audit_run && (
+                                <div className="bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 space-y-4 backdrop-blur-md shadow-md">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                                            <Send className="w-4 h-4 text-sky-400" />
+                                            Enterprise Broadcast Preview
+                                        </h4>
+                                        <p className="text-[11px] text-slate-500 mt-1">
+                                            Simulated adaptive briefing packages pushed automatically to enterprise systems.
+                                        </p>
+                                    </div>
+
+                                    {/* Platform Selector Tabs */}
+                                    <div className="flex border border-slate-800 bg-slate-950 p-1 rounded-lg gap-1">
+                                        <button
+                                            onClick={() => setActivePlatformAlert('teams')}
+                                            className={`flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center gap-1 justify-center cursor-pointer ${
+                                                activePlatformAlert === 'teams'
+                                                    ? 'bg-purple-650 text-white shadow-sm'
+                                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                                            }`}
+                                        >
+                                            Teams
+                                        </button>
+                                        <button
+                                            onClick={() => setActivePlatformAlert('outlook')}
+                                            className={`flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center gap-1 justify-center cursor-pointer ${
+                                                activePlatformAlert === 'outlook'
+                                                    ? 'bg-blue-600 text-white shadow-sm'
+                                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                                            }`}
+                                        >
+                                            Outlook
+                                        </button>
+                                        <button
+                                            onClick={() => setActivePlatformAlert('whatsapp')}
+                                            className={`flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center gap-1 justify-center cursor-pointer ${
+                                                activePlatformAlert === 'whatsapp'
+                                                    ? 'bg-emerald-600 text-white shadow-sm'
+                                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                                            }`}
+                                        >
+                                            WhatsApp
+                                        </button>
+                                    </div>
+
+                                    {/* High-Fidelity Previews */}
+                                    <div className="border border-slate-800 bg-slate-950 rounded-xl overflow-hidden shadow-inner min-h-[220px] flex flex-col">
+                                        
+                                        {/* TEAMS CARD MOCKUP */}
+                                        {activePlatformAlert === 'teams' && (
+                                            <div className="p-4 space-y-3 flex-1 bg-white text-slate-800 font-sans text-xs">
+                                                <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
+                                                    <div className="w-6 h-6 rounded-full bg-purple-600 flex items-center justify-center text-[10px] text-white font-bold">
+                                                        MS
+                                                    </div>
+                                                    <div>
+                                                        <h5 className="font-bold text-slate-800 leading-tight">Microsoft Teams</h5>
+                                                        <p className="text-[10px] text-slate-400">Incoming webhook • Just now</p>
+                                                    </div>
+                                                </div>
+                                                <div className="border-l-4 border-rose-500 pl-3 py-0.5 space-y-2 bg-slate-50/50 p-2.5 rounded-r-lg">
+                                                    <h6 className="font-black text-slate-900 text-xs">
+                                                        {financeState.midnight_audit_run.integrations.teams.title}
+                                                    </h6>
+                                                    <p className="text-[11px] text-slate-500">
+                                                        Dominique's ledger audit has run and found critical warnings.
+                                                    </p>
+                                                    
+                                                    <div className="grid grid-cols-3 gap-1 py-1.5 border-t border-b border-slate-100 text-[10px]">
+                                                        <div className="text-slate-400">Audit Date</div>
+                                                        <div className="col-span-2 text-slate-700 font-bold">{new Date(financeState.midnight_audit_run.timestamp).toLocaleDateString()}</div>
+                                                        <div className="text-slate-400">Audited Entities</div>
+                                                        <div className="col-span-2 text-slate-700 font-bold">parent_nv, flanders_bv</div>
+                                                        <div className="text-slate-400">Compliance Status</div>
+                                                        <div className="col-span-2 text-rose-650 font-bold">🚨 {financeState.midnight_audit_run.violations_found} Violations Found</div>
+                                                    </div>
+
+                                                    <p className="text-[10px] leading-relaxed text-slate-600 bg-rose-50/50 p-2 rounded border border-rose-100">
+                                                        <strong>IFRS IAS 38</strong>: Expensing parent_nv Research (EUR 45k) required.<br/>
+                                                        <strong>Intercompany</strong>: Flanders BV recorded payable has a EUR 2k mismatch.
+                                                    </p>
+
+                                                    <button className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-[10px] rounded border border-purple-700 transition-all shadow-sm select-none cursor-not-allowed">
+                                                        Open Dashboard Console
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* OUTLOOK EMAIL MOCKUP */}
+                                        {activePlatformAlert === 'outlook' && (
+                                            <div className="flex-1 flex flex-col bg-slate-100 text-slate-700 font-sans text-xs">
+                                                <div className="bg-slate-200 p-2.5 border-b border-slate-300 flex items-center justify-between text-[10px] text-slate-500 font-medium">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                                                        Outlook Mail Client
+                                                    </div>
+                                                    <span>In-Box Preview</span>
+                                                </div>
+                                                <div className="p-3 bg-white border-b border-slate-200">
+                                                    <div className="text-[11px] text-slate-400">Subject:</div>
+                                                    <h5 className="font-bold text-slate-800 text-xs mt-0.5">
+                                                        {financeState.midnight_audit_run.integrations.outlook.subject}
+                                                    </h5>
+                                                    <div className="flex justify-between text-[10px] text-slate-400 mt-2">
+                                                        <div>
+                                                            From: <strong className="text-slate-700">Dominique's Twin</strong> &lt;twin@solariagroup.com&gt;
+                                                        </div>
+                                                        <span>Just now</span>
+                                                    </div>
+                                                </div>
+                                                <div className="p-4 bg-slate-50 flex-1 overflow-y-auto max-h-[220px]">
+                                                    <div 
+                                                        className="scale-[0.85] origin-top bg-white border border-slate-200 rounded-lg p-3 shadow-sm font-sans"
+                                                        dangerouslySetInnerHTML={{ __html: financeState.midnight_audit_run.integrations.outlook.html_body }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* WHATSAPP NOTIFICATION MOCKUP */}
+                                        {activePlatformAlert === 'whatsapp' && (
+                                            <div className="flex-1 flex flex-col bg-slate-900 text-slate-300 font-sans text-xs">
+                                                <div className="bg-slate-950 p-3 border-b border-slate-850 flex items-center gap-2">
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                                                    <span className="font-bold text-slate-200 text-xs">Dominique CFO Twin (WhatsApp)</span>
+                                                </div>
+                                                <div className="flex-1 p-3 flex flex-col justify-end bg-slate-950 space-y-3">
+                                                    <div className="max-w-[85%] self-start bg-emerald-950/80 border border-emerald-900/50 rounded-2xl rounded-tl-none p-3 shadow-md space-y-1 relative text-slate-200">
+                                                        <div className="text-[11px] whitespace-pre-wrap leading-relaxed">
+                                                            📱 <strong>Dominique's Twin Midnight Audit Summary</strong><br/><br/>
+                                                            🚨 <strong>Solaria Ledger Review completed with 2 alerts.</strong><br/><br/>
+                                                            ❌ <strong>Critical (IFRS IAS 38)</strong>: Capitalized Research Costs (EUR 45,000) under asset must be expensed in parent_nv.<br/>
+                                                            ⚠️ <strong>Warning</strong>: Intercompany ledger mismatch between Parent NV and Flanders BV of <strong>EUR 2,000</strong>.<br/><br/>
+                                                            👉 Click here to review the Command Center Dashboard: <span className="underline text-sky-400">http://localhost:3000</span>
+                                                        </div>
+                                                        <div className="text-[9px] text-slate-400 text-right mt-1.5">
+                                                            {new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} ✓✓
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
             </div>
 
             {/* Dynamic A2UI Surface Slider Panel */}
@@ -1244,3 +1662,8 @@ export default function FinanceDashboard({
         </div>
     );
 }
+
+const MemoizedFinanceDashboard = React.memo(FinanceDashboard);
+MemoizedFinanceDashboard.displayName = 'FinanceDashboard';
+
+export default MemoizedFinanceDashboard;

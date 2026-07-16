@@ -1,9 +1,8 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Bot, User, Send, Loader2, Activity, Zap, Car, Radio } from 'lucide-react';
-import CityScenarioLab from '@/components/city-scenario-lab';
-import PolicyDashboard from '@/components/policy-dashboard';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -14,6 +13,25 @@ type Resident = {
   battery: number; battery_raw: number; battery_capacity: number; vehicle_type: string; charging: boolean; state: string;
   soh: number; aero_drag: number; regen_efficiency: number;
   battery_temperature: number; payload_weight: number;
+  persona?: {
+    name: string;
+    age: number;
+    occupation: string;
+    income_tier: string;
+    bio: string;
+    traits: {
+      price_sensitivity: number;
+      time_sensitivity: number;
+      eco_sensitivity: number;
+      patience: number;
+    };
+  };
+  latest_thought?: {
+    thought: string;
+    emoji: string;
+    sentiment: string;
+    tick: number;
+  };
 };
 
 type Hub = {
@@ -25,13 +43,60 @@ type Hub = {
 
 type TrafficAgent = { id: string; x: number; y: number };
 
+type SimulationMetrics = {
+  total_city_grid_load_kw: number;
+  ev_power_demand_kw: number;
+  co2_saved_kg_h: number;
+  avg_fleet_soh: number;
+};
+
+type ForecastData = {
+  horizon_ticks: number;
+  weather: string;
+  projected_total_queue: number;
+  projected_avg_price: number;
+  projected_hotspots: { zone: string; congestion: number }[];
+  confidence: number;
+  recommendations: string[];
+};
+
+type SegmentDetails = {
+  count: number;
+  ratio: number;
+};
+
+type SegmentData = {
+  residents: number;
+  battery_segments: {
+    battery_critical: SegmentDetails;
+    battery_low: SegmentDetails;
+    battery_mid: SegmentDetails;
+    battery_high: SegmentDetails;
+  };
+  state_segments: Record<string, SegmentDetails>;
+  charging_pressure_index: number;
+  demand_risk_band: 'low' | 'medium' | 'high';
+};
+
+type LiveTrafficEvent = {
+  id: string;
+  event_type: 'accident' | 'queue';
+  description: string;
+  x: number;
+  y: number;
+  zone_key: string;
+};
+
 type CityState = {
   residents: Resident[];
   hubs: Hub[];
   traffic: TrafficAgent[];
   zone_congestion: Record<string, number>;
   zone_speed_limits: Record<string, number>;
+  traffic_incident_speed_limits?: Record<string, number>;
   weather?: string;
+  metrics?: SimulationMetrics;
+  live_traffic_events?: LiveTrafficEvent[];
 };
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -41,6 +106,47 @@ type Decision = {
   agent: string; type: string; description: string;
   confidence: number; tick: number | null; at: string;
 };
+
+type StartMode = 'smooth' | 'immediate';
+
+const START_MODE_STORAGE_KEY = 'city_start_mode';
+
+function SidebarPanelSkeleton({ title, className }: { title: string; className: string }) {
+  return (
+    <div className={`p-6 rounded-2xl border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl ${className}`}>
+      <div className="animate-pulse space-y-4">
+        <div className="h-3 w-28 rounded-full bg-white/10" />
+        <div className="h-5 w-52 rounded-full bg-white/10" />
+        <div className="space-y-2">
+          <div className="h-10 rounded-2xl bg-white/5" />
+          <div className="h-10 rounded-2xl bg-white/5" />
+          <div className="h-10 rounded-2xl bg-white/5" />
+        </div>
+        <p className="text-xs text-slate-500">Loading {title}…</p>
+      </div>
+    </div>
+  );
+}
+
+const CityScenarioLab = dynamic(() => import('@/components/city-scenario-lab'), {
+  ssr: false,
+  loading: () => <SidebarPanelSkeleton title="Scenario Lab" className="min-h-[520px]" />,
+});
+
+const PolicyDashboard = dynamic(() => import('@/components/policy-dashboard'), {
+  ssr: false,
+  loading: () => <SidebarPanelSkeleton title="Policy Dashboard" className="min-h-[760px]" />,
+});
+
+const ProfitMarginWidget = dynamic(() => import('@/components/ProfitMarginWidget').then(mod => mod.ProfitMarginWidget), {
+  ssr: false,
+  loading: () => <SidebarPanelSkeleton title="Financial Margins" className="min-h-[290px]" />,
+});
+
+const SemanticMemory = dynamic(() => import('@/components/semantic-memory'), {
+  ssr: false,
+  loading: () => <SidebarPanelSkeleton title="Semantic Memory" className="min-h-[380px]" />,
+});
 
 // ---------------------------------------------------------------------------
 // Sparkline
@@ -62,16 +168,7 @@ function Sparkline({ values, color = '#60a5fa' }: { values: number[]; color?: st
   );
 }
 
-// ---------------------------------------------------------------------------
-// Decision type badge colour
-// ---------------------------------------------------------------------------
 
-const DECISION_COLORS: Record<string, string> = {
-  demand_response: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-  capacity_expansion: 'bg-purple-500/20 text-purple-300 border-purple-500/30',
-  traffic_rerouting: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
-  status_nominal: 'bg-green-500/20 text-green-300 border-green-500/30',
-};
 
 // ---------------------------------------------------------------------------
 // API base URL
@@ -85,8 +182,10 @@ const WS_BASE = API_BASE.replace(/^http/, 'ws');
 // ---------------------------------------------------------------------------
 
 export default function CityTwinPage() {
+  const [startMode, setStartMode] = useState<StartMode>('smooth');
+  const [liveFeedEnabled, setLiveFeedEnabled] = useState(false);
   const [cityState, setCityState] = useState<CityState>({
-    residents: [], hubs: [], traffic: [], zone_congestion: {}, zone_speed_limits: {}, weather: undefined,
+    residents: [], hubs: [], traffic: [], zone_congestion: {}, zone_speed_limits: {}, traffic_incident_speed_limits: {}, weather: undefined, live_traffic_events: [],
   });
   const [showTrails, setShowTrails] = useState(true);
   const [showResidentIds, setShowResidentIds] = useState(true);
@@ -98,15 +197,97 @@ export default function CityTwinPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetryRow[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
-  const [forecast, setForecast] = useState<any>(null);
-  const [segments, setSegments] = useState<any>(null);
+  const [forecast, setForecast] = useState<ForecastData | null>(null);
+  const [segments, setSegments] = useState<SegmentData | null>(null);
   const [recommendations, setRecommendations] = useState<string[]>([]);
   const [oracleMode, setOracleMode] = useState<'advisor' | 'autopilot'>('advisor');
+  const isTogglingRef = useRef(false);
   const [hoveredResidentId, setHoveredResidentId] = useState<string | null>(null);
+  const [selectedResidentThoughts, setSelectedResidentThoughts] = useState<{ tick: number; type: string; thought: string }[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevHubPricesRef = useRef<Record<string, number>>({});
+
+  const normalizedResidentFilter = residentFilter.trim().toLowerCase();
+  const matchingResidents = cityState.residents.filter((r) => {
+    const shortId = r.id.replace('res_', '').toLowerCase();
+    return (
+      shortId.includes(normalizedResidentFilter) ||
+      r.id.toLowerCase().includes(normalizedResidentFilter)
+    );
+  });
+  const selectedResidentId = normalizedResidentFilter
+    ? (matchingResidents[0]?.id ?? null)
+    : null;
+  const selectedResident = selectedResidentId
+    ? cityState.residents.find((r) => r.id === selectedResidentId) ?? null
+    : null;
+
+  // Load persisted start mode preference once on mount.
+  useEffect(() => {
+    try {
+      const persistedMode = window.localStorage.getItem(START_MODE_STORAGE_KEY);
+      if (persistedMode === 'smooth' || persistedMode === 'immediate') {
+        setStartMode(persistedMode);
+      }
+    } catch {
+      // Ignore localStorage failures.
+    }
+  }, []);
+
+  // Persist start mode preference changes.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(START_MODE_STORAGE_KEY, startMode);
+    } catch {
+      // Ignore localStorage failures.
+    }
+  }, [startMode]);
+
+  // Fetch thoughts for selected resident
+  useEffect(() => {
+    if (!selectedResidentId) {
+      setSelectedResidentThoughts([]);
+      return;
+    }
+    
+    let cancelled = false;
+    const fetchThoughts = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/city/residents/${selectedResidentId}/thoughts`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (cancelled) return;
+        setSelectedResidentThoughts(data.thoughts || []);
+      } catch (err) {
+        console.error("Error fetching thoughts:", err);
+      }
+    };
+    
+    fetchThoughts();
+    const interval = setInterval(fetchThoughts, 3000);
+    
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [selectedResidentId]);
+
+  // Configure live feed start behavior based on selected mode.
+  useEffect(() => {
+    if (liveFeedEnabled) {
+      return;
+    }
+
+    if (startMode === 'immediate') {
+      setLiveFeedEnabled(true);
+      return;
+    }
+
+    const timer = setTimeout(() => setLiveFeedEnabled(true), 4500);
+    return () => clearTimeout(timer);
+  }, [startMode, liveFeedEnabled]);
 
   // --- Derived sparklines ---
   const priceHistory = telemetry.map(t => t.avg_price);
@@ -116,6 +297,10 @@ export default function CityTwinPage() {
 
   // --- WebSocket ---
   useEffect(() => {
+    if (!liveFeedEnabled) {
+      return;
+    }
+
     let isUnmounting = false;
 
     const connect = () => {
@@ -154,10 +339,11 @@ export default function CityTwinPage() {
       wsRef.current?.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [liveFeedEnabled]);
 
   // --- City-only telemetry from live WS state ---
   useEffect(() => {
+    if (!liveFeedEnabled) return;
     if (!cityState.hubs.length) return;
     const activeHubs = cityState.hubs.filter(h => h.active);
     const avgPrice = activeHubs.length
@@ -177,13 +363,21 @@ export default function CityTwinPage() {
       avg_drag: cityState.residents.length ? cityState.residents.reduce((sum, r) => sum + (r.aero_drag || 0), 0) / cityState.residents.length : 0,
     };
     setTelemetry(prev => [...prev.slice(-119), row]);
-  }, [cityState.hubs, cityState.weather]);
+  }, [cityState.hubs, cityState.weather, cityState.residents, liveFeedEnabled]);
 
   // --- Chief decisions polling ---
   useEffect(() => {
+    if (!liveFeedEnabled) {
+      return;
+    }
+
+    let idleId: number | null = null;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     const fetchDecisions = async () => {
       try {
-        const res = await fetch(`${API_BASE}/city/decisions?limit=8`);
+        const res = await fetch(`${API_BASE}/city/decisions?limit=8`, { credentials: 'include' });
         if (res.ok) {
           const d = await res.json();
           const rows: Decision[] = d.decisions ?? [];
@@ -200,9 +394,9 @@ export default function CityTwinPage() {
     const fetchAnalytics = async () => {
       try {
         const [fRes, sRes, rRes] = await Promise.all([
-          fetch(`${API_BASE}/city/forecast?horizon=30`),
-          fetch(`${API_BASE}/city/segments`),
-          fetch(`${API_BASE}/city/recommendations`)
+          fetch(`${API_BASE}/city/forecast?horizon=30`, { credentials: 'include' }),
+          fetch(`${API_BASE}/city/segments`, { credentials: 'include' }),
+          fetch(`${API_BASE}/city/recommendations`, { credentials: 'include' })
         ]);
         if (fRes.ok) setForecast(await fRes.json());
         if (sRes.ok) setSegments(await sRes.json());
@@ -210,24 +404,45 @@ export default function CityTwinPage() {
       } catch { /* ignore */ }
     };
     const fetchOracleMode = async () => {
+      if (isTogglingRef.current) return;
       try {
-        const res = await fetch(`${API_BASE}/city/oracle/mode`);
+        const res = await fetch(`${API_BASE}/city/oracle/mode`, { credentials: 'include' });
         if (res.ok) {
           const data = await res.json();
           setOracleMode(data.mode);
         }
       } catch { /* ignore */ }
     };
-    fetchDecisions();
-    fetchAnalytics();
-    fetchOracleMode();
-    const interval = setInterval(() => {
-      fetchDecisions();
-      fetchAnalytics();
-      fetchOracleMode();
-    }, 8_000);
-    return () => clearInterval(interval);
-  }, []);
+
+    const startPolling = () => {
+      void fetchDecisions();
+      void fetchAnalytics();
+      void fetchOracleMode();
+      intervalId = setInterval(() => {
+        void fetchDecisions();
+        void fetchAnalytics();
+        void fetchOracleMode();
+      }, 8_000);
+    };
+
+    if ('requestIdleCallback' in window) {
+      idleId = window.requestIdleCallback(startPolling, { timeout: 1800 });
+    } else {
+      timerId = setTimeout(startPolling, 350);
+    }
+
+    return () => {
+      if (idleId !== null && 'cancelIdleCallback' in window) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timerId) {
+        clearTimeout(timerId);
+      }
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [liveFeedEnabled]);
 
   // --- Chat auto-scroll ---
   useEffect(() => {
@@ -255,6 +470,7 @@ export default function CityTwinPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMsg, session_id: sessionId }),
+        credentials: 'include',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -268,15 +484,30 @@ export default function CityTwinPage() {
   };
 
   const toggleOracleMode = async () => {
+    if (isTogglingRef.current) return;
+    isTogglingRef.current = true;
     const newMode = oracleMode === 'advisor' ? 'autopilot' : 'advisor';
     setOracleMode(newMode);
     try {
-      await fetch(`${API_BASE}/city/oracle/mode`, {
+      const res = await fetch(`${API_BASE}/city/oracle/mode`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: newMode }),
+        credentials: 'include',
       });
-    } catch { /* ignore */ }
+      if (res.ok) {
+        const data = await res.json();
+        setOracleMode(data.mode);
+      } else {
+        setOracleMode(oracleMode);
+      }
+    } catch {
+      setOracleMode(oracleMode);
+    } finally {
+      setTimeout(() => {
+        isTogglingRef.current = false;
+      }, 1500);
+    }
   };
 
   // ---------------------------------------------------------------------------
@@ -291,28 +522,14 @@ export default function CityTwinPage() {
     ? congestionValues.reduce((a, b) => a + b, 0) / congestionValues.length
     : 0;
   const maxCongestion = congestionValues.length ? Math.max(...congestionValues) : 0;
-  const normalizedResidentFilter = residentFilter.trim().toLowerCase();
-  const matchingResidents = cityState.residents.filter((r) => {
-    const shortId = r.id.replace('res_', '').toLowerCase();
-    return (
-      shortId.includes(normalizedResidentFilter) ||
-      r.id.toLowerCase().includes(normalizedResidentFilter)
-    );
-  });
-  const selectedResidentId = normalizedResidentFilter
-    ? (matchingResidents[0]?.id ?? null)
-    : null;
-  const selectedResident = selectedResidentId
-    ? cityState.residents.find((r) => r.id === selectedResidentId) ?? null
-    : null;
+
 
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="min-h-screen bg-[#080810] text-white flex flex-col font-sans overflow-hidden"
-      style={{ background: 'radial-gradient(ellipse at 20% 10%, rgba(234,88,12,0.06) 0%, transparent 50%), radial-gradient(ellipse at 80% 90%, rgba(59,130,246,0.06) 0%, transparent 50%), #080810' }}>
+    <div className="city-page-shell min-h-screen text-white flex flex-col font-sans overflow-hidden">
 
       {/* Header */}
       <header className="flex items-center justify-between px-8 py-5 border-b border-white/5 shrink-0 z-10 relative">
@@ -324,11 +541,30 @@ export default function CityTwinPage() {
             </h1>
             <span className="text-slate-500 font-light">— EV + Urban Traffic</span>
           </div>
-          {cityState.weather && (
-            <span className="mt-1 inline-flex items-center gap-1 text-xs text-amber-400/70 bg-amber-400/5 border border-amber-400/10 rounded-full px-3 py-0.5">
-              {cityState.weather}
+          <span className="mt-1 inline-flex min-h-6 min-w-[118px] items-center gap-1 text-xs text-amber-400/70 bg-amber-400/5 border border-amber-400/10 rounded-full px-3 py-0.5">
+            {cityState.weather ?? 'Weather: pending'}
+          </span>
+          <div className="mt-2 flex flex-col items-start">
+            <div className="flex items-center rounded-full border border-white/10 bg-white/5 p-1">
+              <button
+                onClick={() => setStartMode('smooth')}
+                title="Prioritize smooth load"
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${startMode === 'smooth' ? 'bg-orange-500/30 text-orange-200' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Smooth load
+              </button>
+              <button
+                onClick={() => setStartMode('immediate')}
+                title="Start simulation immediately"
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${startMode === 'immediate' ? 'bg-cyan-500/30 text-cyan-200' : 'text-slate-400 hover:text-slate-200'}`}
+              >
+                Immediate
+              </button>
+            </div>
+            <span className="mt-1 pl-2 text-[10px] font-medium text-slate-500">
+              Preference saved: {startMode === 'smooth' ? 'Smooth load' : 'Immediate'}
             </span>
-          )}
+          </div>
         </div>
         <div className="flex gap-3">
           <button onClick={() => setShowTrails(!showTrails)}
@@ -389,6 +625,45 @@ export default function CityTwinPage() {
               })
             )}
 
+            {/* Live Belgian Traffic Incidents Overlay (pulsing orange border + warning symbol) */}
+            {cityState.live_traffic_events?.map(ev => {
+              const [zx, zy] = ev.zone_key.split(',').map(Number);
+              const isAccident = ev.event_type === 'accident';
+              return (
+                <g key={`live-traffic-${ev.id}`}>
+                  {/* Pulsing overlay rect */}
+                  <rect
+                    x={zx * 20} y={zy * 20}
+                    width={20} height={20}
+                    fill={isAccident ? 'rgba(239,68,68,0.06)' : 'rgba(249,115,22,0.06)'}
+                    stroke={isAccident ? '#ef4444' : '#f97316'}
+                    strokeWidth="0.5"
+                    strokeDasharray="2,2"
+                    rx="0.5"
+                    className="animate-pulse"
+                  />
+                  {/* Caution Triangle Icon */}
+                  <g transform={`translate(${zx * 20 + 3.5}, ${zy * 20 + 3.5})`}>
+                    <polygon
+                      points="0,-2 2,1.5 -2,1.5"
+                      fill={isAccident ? '#ef4444' : '#f97316'}
+                      stroke="#fff"
+                      strokeWidth="0.2"
+                    />
+                    <text
+                      y="1"
+                      textAnchor="middle"
+                      fill="#fff"
+                      fontSize="2"
+                      fontWeight="bold"
+                    >
+                      !
+                    </text>
+                  </g>
+                </g>
+              );
+            })}
+
             {/* Signal Timing Throttle Overlay (blue = Oracle-controlled speed limit) */}
             {Object.entries(cityState.zone_speed_limits ?? {}).map(([key, mult]) => {
               const [zx, zy] = key.split(',').map(Number);
@@ -423,7 +698,7 @@ export default function CityTwinPage() {
               <g key={hub.id} className="transition-all duration-[500ms] ease-out" transform={`translate(${hub.x}, ${hub.y})`}>
                 {hub.active ? (
                   <>
-                    <circle r="8" className="fill-pink-500/10 stroke-pink-500/30 stroke-[0.2] animate-ping" style={{ animationDuration: '3s' }} />
+                    <circle r="8" className="city-hub-pulse fill-pink-500/10 stroke-pink-500/30 stroke-[0.2] animate-ping" />
                     <circle r="5" className="fill-pink-500/20 stroke-pink-500/50 stroke-[0.5]" />
                     <circle r="1.5" className="fill-pink-400" />
                   </>
@@ -496,7 +771,15 @@ export default function CityTwinPage() {
                   opacity={isSelected ? 1 : 0.22}
                   onMouseEnter={() => setHoveredResidentId(res.id)}
                   onMouseLeave={() => setHoveredResidentId(null)}
+                  onClick={() => setResidentFilter(residentLabel)}
                 >
+                  {res.latest_thought && (
+                    <g transform="translate(0, -7.5)" className="pointer-events-none">
+                      <rect x="-2.5" y="-3" width="5" height="3.8" rx="0.8" fill="#12121a" stroke="rgba(255,255,255,0.15)" strokeWidth="0.2" />
+                      <text y="-0.3" textAnchor="middle" fontSize="2.5">{res.latest_thought.emoji}</text>
+                      <polygon points="0,1.2 -0.6,0.7 0.6,0.7" fill="#12121a" stroke="rgba(255,255,255,0.15)" strokeWidth="0.15" />
+                    </g>
+                  )}
                   {isSelected && selectedResidentId && <circle r="3.4" fill="none" className="stroke-cyan-300/70 stroke-[0.45] animate-pulse pointer-events-none" />}
                   {/* Invisible hit area for easier hovering */}
                   <circle r="6" fill="transparent" />
@@ -542,6 +825,17 @@ export default function CityTwinPage() {
               );
             })()}
           </svg>
+
+          {!liveFeedEnabled && startMode === 'smooth' && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0a0a10]/55 backdrop-blur-[2px]">
+              <button
+                onClick={() => setLiveFeedEnabled(true)}
+                className="rounded-full border border-orange-400/40 bg-orange-500/20 px-5 py-2 text-sm font-semibold text-orange-200 transition-colors hover:bg-orange-500/30"
+              >
+                Start Live Simulation
+              </button>
+            </div>
+          )}
 
           {/* City Oracle Chat */}
           <div className="absolute bottom-6 left-6 w-[360px] h-[450px] flex flex-col rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl shadow-[0_0_30px_rgba(0,0,0,0.5)] overflow-hidden">
@@ -612,10 +906,68 @@ export default function CityTwinPage() {
                   {(avgCongestion * 100).toFixed(0)}%
                 </p>
               </div>
+              {cityState.metrics && (
+                <>
+                  <div className="h-px w-full bg-gradient-to-r from-white/5 to-transparent" />
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-400">Grid Load (Total / EV)</p>
+                    <p className="text-xs font-mono font-bold text-cyan-300">
+                      {cityState.metrics.total_city_grid_load_kw} / {cityState.metrics.ev_power_demand_kw} kW
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-400">CO2 Saved (Displaced)</p>
+                    <p className="text-xs font-mono font-bold text-emerald-400">
+                      {cityState.metrics.co2_saved_kg_h} kg/h
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-slate-400">Avg Battery Health</p>
+                    <p className="text-xs font-mono font-bold text-teal-400">
+                      {(cityState.metrics.avg_fleet_soh * 100).toFixed(1)}% SOH
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
-          <CityScenarioLab apiBase={API_BASE} />
+          {/* Live Belgian Traffic Incidents Panel */}
+          <div className="p-6 rounded-[2rem] border border-orange-500/10 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-orange-400">Flanders Traffic Feed</h2>
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-medium border border-emerald-500/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live Sync
+              </div>
+            </div>
+            <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+              {!cityState.live_traffic_events || cityState.live_traffic_events.length === 0 ? (
+                <p className="text-xs text-slate-500 italic">No active traffic incidents detected in Flanders.</p>
+              ) : (
+                cityState.live_traffic_events.map((ev) => (
+                  <div key={ev.id} className="p-3 rounded-xl border border-white/5 bg-white/[0.01] hover:bg-white/[0.03] transition-colors flex gap-2">
+                    <span className="text-xs mt-0.5 shrink-0">
+                      {ev.event_type === 'accident' ? '🚨' : '🚗'}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold text-slate-200 uppercase">{ev.event_type}</p>
+                        <span className="text-[10px] font-mono text-slate-500">Zone {ev.zone_key}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1 leading-normal">{ev.description}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <ProfitMarginWidget />
+
+          <div className="min-h-[520px]">
+            <CityScenarioLab apiBase={API_BASE} />
+          </div>
 
           {/* EV Tracker */}
           <div className="p-6 rounded-[2rem] border border-cyan-500/10 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl flex flex-col gap-3">
@@ -651,15 +1003,104 @@ export default function CityTwinPage() {
               })}
             </div>
             {selectedResident ? (
-              <div className="mt-1 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs">
-                <p className="font-mono text-cyan-200 mb-1">EV {selectedResident.id.replace('res_', '')} ({selectedResident.vehicle_type})</p>
-                <p className="text-slate-300">State: <span className="text-slate-100 font-medium uppercase">{selectedResident.state}</span></p>
-                <p className="text-slate-300">Battery: <span className="text-slate-100 font-medium">{selectedResident.battery.toFixed(1)}%</span> <span className="text-slate-500 font-mono">({selectedResident.battery_raw?.toFixed(1)}/{selectedResident.battery_capacity?.toFixed(1)}kWh)</span></p>
-                <p className="text-slate-300">Health (SOH): <span className={`font-medium ${selectedResident.soh > 0.9 ? 'text-green-400' : selectedResident.soh > 0.8 ? 'text-yellow-400' : 'text-red-400'}`}>{(selectedResident.soh * 100).toFixed(1)}%</span></p>
-                <p className="text-slate-300">Physics: <span className="text-slate-100 font-medium">{cityState.weather === 'extreme_cold' ? '❄️ Coldgate Active' : cityState.weather === 'extreme_heat' ? '🔥 Thermal Throttled' : '✅ Nominal'}</span></p>
-                <p className="text-slate-300">Drag/Regen: <span className="text-slate-100 font-medium">{selectedResident.aero_drag?.toFixed(3)} kW / {(selectedResident.regen_efficiency * 100).toFixed(0)}%</span></p>
-                <p className="text-slate-300">Temp/Payload: <span className="text-slate-100 font-medium">{selectedResident.battery_temperature?.toFixed(1)}°C / {selectedResident.payload_weight?.toFixed(0)} kg</span></p>
-                <p className="text-slate-300">Position: <span className="text-slate-100 font-mono">({selectedResident.x.toFixed(1)}, {selectedResident.y.toFixed(1)})</span></p>
+              <div className="mt-1 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-xs space-y-3">
+                {/* Persona Header */}
+                {selectedResident.persona ? (
+                  <div className="border-b border-white/5 pb-2 mb-2">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-semibold text-white text-sm">{selectedResident.persona.name}</h4>
+                        <p className="text-[10px] text-cyan-300 font-mono">{selectedResident.persona.occupation}, {selectedResident.persona.age}</p>
+                      </div>
+                      <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-white/5 text-slate-400 font-mono shrink-0">
+                        {selectedResident.persona.income_tier} Income
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 italic mt-1.5">"{selectedResident.persona.bio}"</p>
+                  </div>
+                ) : (
+                  <p className="font-mono text-cyan-200 mb-1">EV {selectedResident.id.replace('res_', '')} ({selectedResident.vehicle_type})</p>
+                )}
+
+                {/* Behavioral Traits */}
+                {selectedResident.persona?.traits && (
+                  <div className="space-y-1.5 py-1">
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Behavioral Traits</p>
+                    
+                    {/* Price Sensitivity */}
+                    <div>
+                      <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                        <span>Price Sensitivity</span>
+                        <span className="font-mono">{Math.round(selectedResident.persona.traits.price_sensitivity * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-red-400 transition-all duration-500" style={{ width: `${selectedResident.persona.traits.price_sensitivity * 100}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Time Sensitivity */}
+                    <div>
+                      <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                        <span>Time Sensitivity</span>
+                        <span className="font-mono">{Math.round(selectedResident.persona.traits.time_sensitivity * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-green-400 transition-all duration-500" style={{ width: `${selectedResident.persona.traits.time_sensitivity * 100}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Eco Sensitivity */}
+                    <div>
+                      <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                        <span>Eco Sensitivity</span>
+                        <span className="font-mono">{Math.round(selectedResident.persona.traits.eco_sensitivity * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-blue-400 transition-all duration-500" style={{ width: `${selectedResident.persona.traits.eco_sensitivity * 100}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Patience */}
+                    <div>
+                      <div className="flex justify-between text-[10px] text-slate-300 mb-0.5">
+                        <span>Patience</span>
+                        <span className="font-mono">{Math.round(selectedResident.persona.traits.patience * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                        <div className="h-full bg-yellow-400 transition-all duration-500" style={{ width: `${selectedResident.persona.traits.patience * 100}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* State & Telemetry */}
+                <div className="grid grid-cols-2 gap-2 border-t border-b border-white/5 py-2 my-2 text-[10px] text-slate-300">
+                  <p>State: <span className="text-white font-medium uppercase">{selectedResident.state}</span></p>
+                  <p>Battery: <span className="text-white font-medium">{selectedResident.battery.toFixed(1)}%</span></p>
+                  <p>SOH: <span className="text-white font-medium">{(selectedResident.soh * 100).toFixed(0)}%</span></p>
+                  <p>Drag: <span className="text-white font-medium">{selectedResident.aero_drag?.toFixed(2)} kW</span></p>
+                  <p>Temp: <span className="text-white font-medium">{selectedResident.battery_temperature?.toFixed(0)}°C</span></p>
+                  <p>Payload: <span className="text-white font-medium">{selectedResident.payload_weight?.toFixed(0)} kg</span></p>
+                </div>
+
+                {/* Thought Logs terminal */}
+                <div className="space-y-1">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex justify-between items-center">
+                    <span>Inner Mind Logs</span>
+                    {selectedResidentThoughts.length > 0 && <span className="animate-pulse text-[8px] bg-cyan-400/20 text-cyan-300 px-1 py-0.5 rounded font-mono">LIVE</span>}
+                  </p>
+                  <div className="h-28 overflow-y-auto bg-black/40 rounded-lg p-2 font-mono text-[9px] text-slate-300 space-y-1.5 border border-white/5">
+                    {selectedResidentThoughts.length > 0 ? (
+                      selectedResidentThoughts.map((t, idx) => (
+                        <div key={idx} className="border-b border-white/5 pb-1 last:border-0 last:pb-0">
+                          <span className="text-cyan-400 font-bold">Tick {t.tick}:</span> <span className="text-slate-200">{t.thought}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-slate-500 italic text-center pt-8">No thoughts recorded yet.</p>
+                    )}
+                  </div>
+                </div>
               </div>
             ) : normalizedResidentFilter ? (
               <p className="text-xs text-amber-300/80">No EV match for this filter.</p>
@@ -687,16 +1128,22 @@ export default function CityTwinPage() {
             ))}
           </div>
 
+          {/* Semantic Memory Search */}
+          <SemanticMemory />
+
           {/* Policy Dashboard */}
-          <PolicyDashboard 
-            decisions={decisions} 
-            cityState={cityState} 
-            forecast={forecast}
-            segments={segments}
-            recommendations={recommendations}
-            oracleMode={oracleMode}
-            onToggleMode={toggleOracleMode}
-          />
+          <div className="min-h-[760px]">
+            <PolicyDashboard 
+              decisions={decisions} 
+              cityState={cityState}
+              forecast={forecast}
+              segments={segments}
+              recommendations={recommendations}
+              oracleMode={oracleMode}
+              onToggleMode={toggleOracleMode}
+              telemetryHistory={telemetry}
+            />
+          </div>
 
           {/* Hub Markets */}
           <div className="p-6 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl">
@@ -739,10 +1186,16 @@ export default function CityTwinPage() {
           </div>
 
           {/* Historical Trends */}
-          <div className="p-6 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl">
+          <div className="min-h-[390px] p-6 rounded-[2rem] border border-white/5 bg-[#12121a]/60 backdrop-blur-2xl shadow-2xl">
             <h2 className="text-xs font-semibold uppercase tracking-widest mb-4 text-slate-400">Historical Trends</h2>
             {telemetry.length < 2 ? (
-              <p className="text-xs text-slate-600 italic">Collecting data…</p>
+              <div className="animate-pulse space-y-3">
+                <p className="text-xs text-slate-600 italic">Collecting data…</p>
+                <div className="h-10 rounded-xl bg-white/5" />
+                <div className="h-10 rounded-xl bg-white/5" />
+                <div className="h-10 rounded-xl bg-white/5" />
+                <div className="h-10 rounded-xl bg-white/5" />
+              </div>
             ) : (
               <div className="flex flex-col gap-4">
                 <div>

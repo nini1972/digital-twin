@@ -1,6 +1,6 @@
 import sqlite3
-import json
 import os
+import json
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'simulation.db')
@@ -71,8 +71,36 @@ def init_db():
             created_at TEXT NOT NULL
         )
     ''')
+    # Resident personas table — dynamic citizen simulation profiles
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS resident_personas (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            age INTEGER,
+            occupation TEXT,
+            income_tier TEXT,
+            bio TEXT,
+            vehicle_type TEXT,
+            traits_json TEXT
+        )
+    ''')
+    # Resident thoughts table — logging dynamic citizen thoughts & sentiment
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS resident_thoughts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            resident_id TEXT NOT NULL,
+            tick INTEGER,
+            decision_type TEXT,
+            thought TEXT,
+            sentiment TEXT,
+            created_at TEXT NOT NULL
+        )
+    ''')
     conn.commit()
     conn.close()
+    # Prune existing database tables on startup to resolve current bloat
+    prune_old_data()
+
 
 def save_message(session_id: str, role: str, content: str, timestamp: str = None):
     if timestamp is None:
@@ -325,3 +353,179 @@ def clear_agent_decisions() -> int:
     conn.commit()
     conn.close()
     return count
+
+
+def prune_old_data(max_telemetry: int = 5000, max_events: int = 1000, max_decisions: int = 1000):
+    """Keep only the latest rows in telemetry, market_events, and agent_decisions to prevent bloat."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # Prune telemetry
+        cursor.execute('''
+            DELETE FROM telemetry 
+            WHERE id NOT IN (
+                SELECT id FROM telemetry ORDER BY id DESC LIMIT ?
+            )
+        ''', (max_telemetry,))
+        
+        # Prune market_events
+        cursor.execute('''
+            DELETE FROM market_events 
+            WHERE id NOT IN (
+                SELECT id FROM market_events ORDER BY id DESC LIMIT ?
+            )
+        ''', (max_events,))
+        
+        # Prune agent_decisions
+        cursor.execute('''
+            DELETE FROM agent_decisions 
+            WHERE id NOT IN (
+                SELECT id FROM agent_decisions ORDER BY id DESC LIMIT ?
+            )
+        ''', (max_decisions,))
+        
+        conn.commit()
+    except Exception as e:
+        print(f"[Database] Pruning error: {e}")
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Resident Personas & Thoughts (Dynamic Citizens)
+# ---------------------------------------------------------------------------
+
+def save_resident_persona(
+    persona_id: str,
+    name: str,
+    age: int,
+    occupation: str,
+    income_tier: str,
+    bio: str,
+    vehicle_type: str,
+    traits: dict,
+):
+    """Save or update a resident persona's profile and behavioral traits."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        INSERT OR REPLACE INTO resident_personas (id, name, age, occupation, income_tier, bio, vehicle_type, traits_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        (persona_id, name, age, occupation, income_tier, bio, vehicle_type, json.dumps(traits)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_resident_personas() -> dict[str, dict]:
+    """Load all resident personas as a dictionary keyed by resident ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT id, name, age, occupation, income_tier, bio, vehicle_type, traits_json
+        FROM resident_personas
+        '''
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    
+    personas = {}
+    for r in rows:
+        try:
+            traits = json.loads(r["traits_json"])
+        except Exception:
+            traits = {}
+        personas[r["id"]] = {
+            "id": r["id"],
+            "name": r["name"],
+            "age": r["age"],
+            "occupation": r["occupation"],
+            "income_tier": r["income_tier"],
+            "bio": r["bio"],
+            "vehicle_type": r["vehicle_type"],
+            "traits": traits,
+        }
+    return personas
+
+
+def save_resident_thought(
+    resident_id: str,
+    tick: int,
+    decision_type: str,
+    thought: str,
+    sentiment: str,
+):
+    """Save an LLM-generated thought and sentiment log for a resident."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        INSERT INTO resident_thoughts (resident_id, tick, decision_type, thought, sentiment, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''',
+        (resident_id, tick, decision_type, thought, sentiment, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_resident_thoughts(resident_id: str, limit: int = 20) -> list[dict]:
+    """Retrieve the recent thoughts history for a specific resident."""
+    limit = max(1, min(limit, 100))
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT tick, decision_type, thought, sentiment, created_at
+        FROM resident_thoughts
+        WHERE resident_id = ?
+        ORDER BY id DESC
+        LIMIT ?
+        ''',
+        (resident_id, limit),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "tick": r["tick"],
+            "type": r["decision_type"],
+            "thought": r["thought"],
+            "sentiment": r["sentiment"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+def load_recent_thoughts_summary(limit: int = 50) -> list[dict]:
+    """Retrieve recent thoughts across all residents to compute aggregate sentiments."""
+    limit = max(1, min(limit, 200))
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        SELECT resident_id, tick, decision_type, thought, sentiment, created_at
+        FROM resident_thoughts
+        ORDER BY id DESC
+        LIMIT ?
+        ''',
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "resident_id": r["resident_id"],
+            "tick": r["tick"],
+            "type": r["decision_type"],
+            "thought": r["thought"],
+            "sentiment": r["sentiment"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+

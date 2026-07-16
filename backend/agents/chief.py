@@ -5,8 +5,6 @@ actuation decisions.  Decisions are saved to the `agent_decisions` SQLite
 table and made available to city_context.py for Oracle chat enrichment.
 """
 
-import asyncio
-from datetime import datetime
 
 from database import save_agent_decision, load_recent_decisions
 from memory.chroma import vector_memory
@@ -27,7 +25,6 @@ class ChiefOracleAgent:
         self.demand_analyzer = demand_analyzer
         self.congestion_analyzer = congestion_analyzer
         self.mode = "advisor"  # "advisor" or "autopilot"
-        self._cycle_count = 0
         self._last_tick = 0
         self._last_decision_ticks: dict[tuple[str, str], int] = {}
         self._tool_last_executed_at: dict[str, float] = {}
@@ -61,7 +58,6 @@ class ChiefOracleAgent:
         if tick - self._last_tick < CHIEF_CYCLE_TICKS:
             return
         self._last_tick = tick
-        self._cycle_count += 1
         await self._synthesize(tick)
 
     async def _synthesize(self, tick: int):
@@ -111,9 +107,9 @@ class ChiefOracleAgent:
                     decisions_made += 1
             elif ftype == "degraded_fleet_pattern":
                 description = (
-                    f"Significant EV fleet battery degradation detected. "
-                    f"Routing efficiency drops and charging times increase. "
-                    f"Recommend prioritizing battery health preservation routines and building more charging capacity."
+                    "Significant EV fleet battery degradation detected."
+                    "Routing efficiency drops and charging times increase."
+                    "Recommend prioritizing battery health preservation routines and building more charging capacity."
                 )
                 if self._emit_decision_once(
                     decision_type="capacity_expansion",
@@ -132,6 +128,19 @@ class ChiefOracleAgent:
                     decision_type="traffic_rerouting",
                     description=description,
                     confidence=0.92,
+                    tick=tick,
+                ):
+                    decisions_made += 1
+            elif ftype == "grid_stress_pattern":
+                peak_price = finding.get("peak_wholesale_price", 0.0)
+                description = (
+                    f"Severe grid energy stress and pricing spikes detected (peak EUR {peak_price:.3f}/kWh). "
+                    f"Recommend pricing throttling at all hubs and postponing non-essential EV charging."
+                )
+                if self._emit_decision_once(
+                    decision_type="demand_response",
+                    description=description,
+                    confidence=0.88,
                     tick=tick,
                 ):
                     decisions_made += 1
@@ -189,4 +198,6 @@ class ChiefOracleAgent:
         """Set Oracle mode (advisor or autopilot)."""
         if new_mode in ("advisor", "autopilot"):
             self.mode = new_mode
+            if self.city_engine:
+                self.city_engine.chief_mode = new_mode
             print(f"[ChiefOracle] Mode changed to {self.mode}")

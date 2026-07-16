@@ -1,4 +1,5 @@
 from typing import Any
+from simulation import WEATHER_CONFIG
 
 
 def _tool(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
@@ -40,7 +41,7 @@ def _bounded_integer(minimum: int | None = None, maximum: int | None = None, des
 
 def build_city_chat_tools() -> list[dict[str, Any]]:
     common_zone = {"type": "string", "description": "Zone key in 'zx,zy' format."}
-    weather_enum = ["sunny", "storm", "extreme_heat", "winter", "snow", "rain"]
+    weather_enum = list(sorted(WEATHER_CONFIG.keys()))
     action_enum = [
         "set_weather",
         "add_city_hub",
