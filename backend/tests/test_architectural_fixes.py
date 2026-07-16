@@ -33,7 +33,7 @@ class TestArchitecturalFixes(unittest.TestCase):
         engine = MagicMock()
         engine.current_market_price = 0.10
         hub.update(engine)
-        self.assertAlmostEqual(hub.price, 0.18)  # decremented by 0.01 since floor is 0.15 (0.10 + 0.02 = 0.12, clamped to 0.15)
+        self.assertAlmostEqual(hub.price, 0.18)  # decremented by 0.01 from 0.19; still above floored minimum (max(0.10 + 0.02, 0.15) = 0.15)
 
         # Test 3: Engine with wholesale price spike
         engine.current_market_price = 0.40  # floor = 0.42
